@@ -106,7 +106,10 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
             var sender = Task.Run(() => SendTextAsync(ws, textChunks, ct), ct);
             var player = Task.Run(() => PlayAsync(audioQueue, ct), ct);
 
-            await ReceiveLoopAsync(ws, audioQueue, ct).ConfigureAwait(false);
+            // Time-to-first-audio-chunk for the streaming engine (clock starts at utterance
+            // start, matching the blocking engines' tts_first_chunk for comparability).
+            var firstChunkClock = System.Diagnostics.Stopwatch.StartNew();
+            await ReceiveLoopAsync(ws, audioQueue, firstChunkClock, ct).ConfigureAwait(false);
 
             await sender.ConfigureAwait(false);
             audioQueue.Writer.TryComplete();
@@ -147,9 +150,11 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
     }
 
     /// <summary>Reads audio messages until the API signals the final frame.</summary>
-    private async Task ReceiveLoopAsync(ClientWebSocket ws, Channel<short[]> audioQueue, CancellationToken ct)
+    private async Task ReceiveLoopAsync(ClientWebSocket ws, Channel<short[]> audioQueue,
+        System.Diagnostics.Stopwatch firstChunkClock, CancellationToken ct)
     {
         var buffer = new byte[16 * 1024];
+        bool firstChunk = true;
         while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
         {
             var message = await ReceiveMessageAsync(ws, buffer, ct).ConfigureAwait(false);
@@ -166,6 +171,11 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
                 var b64 = audioEl.GetString();
                 if (!string.IsNullOrEmpty(b64))
                 {
+                    if (firstChunk)
+                    {
+                        BenchMetrics.Record("tts_first_chunk", firstChunkClock.Elapsed.TotalMilliseconds);
+                        firstChunk = false;
+                    }
                     audioQueue.Writer.TryWrite(BytesToShorts(Convert.FromBase64String(b64)));
                 }
             }

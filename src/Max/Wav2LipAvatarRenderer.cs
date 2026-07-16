@@ -324,6 +324,11 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
 
         try
         {
+            // Whole-tick cost (mouth inference + compose + encode). The budget at 25fps is
+            // 40ms; anything above means dropped ticks via the busy-guard and a laggy face.
+            // Only recorded while speaking - idle ticks are cheap and would swamp the buffer.
+            var tickClock = _speaking ? System.Diagnostics.Stopwatch.StartNew() : null;
+
             var mouth = NextMouth();
             var bgr = RenderFrame(mouth, _frameIdx);
             _frameIdx++;
@@ -342,6 +347,11 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
                     : (uint)Math.Clamp((now - _lastEmitMs) * (VIDEO_SAMPLING_RATE / 1000), 900, 4 * 3600);
                 _lastEmitMs = now;
                 OnVideoSourceEncodedSample?.Invoke(durationRtpTS, encoded);
+            }
+
+            if (tickClock != null)
+            {
+                BenchMetrics.Record("render_tick", tickClock.Elapsed.TotalMilliseconds);
             }
         }
         catch (Exception excp)

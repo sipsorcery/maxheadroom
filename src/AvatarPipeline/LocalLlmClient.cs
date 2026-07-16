@@ -125,9 +125,18 @@ public class LocalLlmClient : ILlmClient
 
         var buffer = new StringBuilder();
         bool anyYielded = false;
+        var ttftClock = System.Diagnostics.Stopwatch.StartNew();
+        bool firstToken = true;
 
         await foreach (var delta in ReadDeltasAsync(prompt).ConfigureAwait(false))
         {
+            if (firstToken && delta.Length > 0)
+            {
+                // First token from the wire - what llm_first_sentence hides behind
+                // sentence chunking. The gap between the two is chunking cost.
+                BenchMetrics.Record("llm_ttft", ttftClock.Elapsed.TotalMilliseconds);
+                firstToken = false;
+            }
             buffer.Append(delta);
 
             string sentence;
