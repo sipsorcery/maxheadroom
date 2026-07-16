@@ -37,6 +37,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using demo.Performance;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Media;
 using SIPSorceryMedia.Abstractions;
@@ -70,7 +71,9 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
     }
 
     /// <summary>Speaks a single complete piece of text (wraps it as a one-item stream).</summary>
-    public Task SpeakAsync(string text) => SpeakStreamAsync(Single(text));
+    public Task SpeakAsync(string text) => SpeakStreamAsync(Single(text), null);
+
+    public Task SpeakAsync(string text, BenchmarkTimeline timeline) => SpeakStreamAsync(Single(text), timeline);
 
     private static async IAsyncEnumerable<string> Single(string text)
     {
@@ -78,7 +81,9 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
         await Task.CompletedTask;
     }
 
-    public async Task SpeakStreamAsync(IAsyncEnumerable<string> textChunks)
+    public Task SpeakStreamAsync(IAsyncEnumerable<string> textChunks) => SpeakStreamAsync(textChunks, null);
+
+    public async Task SpeakStreamAsync(IAsyncEnumerable<string> textChunks, BenchmarkTimeline timeline)
     {
         await _speakLock.WaitAsync().ConfigureAwait(false);
 
@@ -104,9 +109,9 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
             _renderer.BeginSpeech();
 
             var sender = Task.Run(() => SendTextAsync(ws, textChunks, ct), ct);
-            var player = Task.Run(() => PlayAsync(audioQueue, ct), ct);
+            var player = Task.Run(() => PlayAsync(audioQueue, ct, timeline), ct);
 
-            await ReceiveLoopAsync(ws, audioQueue, ct).ConfigureAwait(false);
+            await ReceiveLoopAsync(ws, audioQueue, ct, timeline).ConfigureAwait(false);
 
             await sender.ConfigureAwait(false);
             audioQueue.Writer.TryComplete();
@@ -147,7 +152,8 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
     }
 
     /// <summary>Reads audio messages until the API signals the final frame.</summary>
-    private async Task ReceiveLoopAsync(ClientWebSocket ws, Channel<short[]> audioQueue, CancellationToken ct)
+    private async Task ReceiveLoopAsync(ClientWebSocket ws, Channel<short[]> audioQueue,
+        CancellationToken ct, BenchmarkTimeline timeline)
     {
         var buffer = new byte[16 * 1024];
         while (ws.State == WebSocketState.Open && !ct.IsCancellationRequested)
@@ -166,6 +172,7 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
                 var b64 = audioEl.GetString();
                 if (!string.IsNullOrEmpty(b64))
                 {
+                    timeline?.RecordOnce(BenchmarkEventNames.TtsAudioReady);
                     audioQueue.Writer.TryWrite(BytesToShorts(Convert.FromBase64String(b64)));
                 }
             }
@@ -182,7 +189,7 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
     /// real time and hands each audio window to the renderer while the (blocking) play call runs, so
     /// the face stays locked to the audio that is actually sounding.
     /// </summary>
-    private async Task PlayAsync(Channel<short[]> audioQueue, CancellationToken ct)
+    private async Task PlayAsync(Channel<short[]> audioQueue, CancellationToken ct, BenchmarkTimeline timeline)
     {
         int frameSamples = TargetRate * EnvelopeFrameMs / 1000;
 
@@ -223,6 +230,7 @@ public sealed class ElevenLabsStreamingTtsSpeaker : IStreamingAvatarSpeaker
                 }, ct);
             }
 
+            timeline?.RecordOnce(BenchmarkEventNames.AudioStarted);
             await _audio.SendAudioFromStream(ToStream(chunk), AudioSamplingRatesEnum.Rate16KHz).ConfigureAwait(false);
             await mouth.ConfigureAwait(false);
         }

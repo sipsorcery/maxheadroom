@@ -21,6 +21,7 @@ using System.IO;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using demo.Performance;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Media;
 using SIPSorceryMedia.Abstractions;
@@ -59,7 +60,9 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
     /// Synthesises <paramref name="text"/> and plays it through the avatar with amplitude-driven
     /// lip-sync. Only one utterance is spoken at a time.
     /// </summary>
-    public async Task SpeakAsync(string text)
+    public Task SpeakAsync(string text) => SpeakAsync(text, null);
+
+    public async Task SpeakAsync(string text, BenchmarkTimeline timeline)
     {
         if (string.IsNullOrWhiteSpace(text))
         {
@@ -83,6 +86,7 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
 
             logger.LogInformation("[{Engine}] Synthesised {Samples} samples ({Ms} ms).",
                 EngineName, samples.Length, samples.Length * 1000 / TargetRate);
+            timeline?.RecordOnce(BenchmarkEventNames.TtsAudioReady);
 
             _renderer.BeginSpeech();
 
@@ -125,6 +129,7 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
                 });
             }
 
+            timeline?.RecordOnce(BenchmarkEventNames.AudioStarted);
             await _audio.SendAudioFromStream(ToStream(samples), AudioSamplingRatesEnum.Rate16KHz)
                 .ConfigureAwait(false);
 

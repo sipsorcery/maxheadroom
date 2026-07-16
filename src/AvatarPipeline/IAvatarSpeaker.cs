@@ -17,6 +17,7 @@
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using demo.Performance;
 
 namespace demo;
 
@@ -24,10 +25,17 @@ public interface IAvatarSpeaker
 {
     /// <summary>Synthesises and speaks a complete piece of text, with lip-sync.</summary>
     Task SpeakAsync(string text);
+
+    /// <summary>Speaks text and records optional benchmark audio-boundary events.</summary>
+    Task SpeakAsync(string text, BenchmarkTimeline timeline) => SpeakAsync(text);
 }
 
 public interface IStreamingAvatarSpeaker : IAvatarSpeaker
 {
     /// <summary>Speaks a reply as its text arrives in chunks (e.g. an LLM token/sentence stream).</summary>
     Task SpeakStreamAsync(IAsyncEnumerable<string> textChunks);
+
+    /// <summary>Streams text while recording optional benchmark audio-boundary events.</summary>
+    Task SpeakStreamAsync(IAsyncEnumerable<string> textChunks, BenchmarkTimeline timeline) =>
+        SpeakStreamAsync(textChunks);
 }

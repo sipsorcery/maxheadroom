@@ -12,6 +12,7 @@ namespace demo.Performance;
 /// </summary>
 public static class BenchmarkEventNames
 {
+    public const string PromptAccepted = "prompt_accepted";
     public const string SpeechEnd = "speech_end";
     public const string SttFinal = "stt_final";
     public const string LlmRequestStarted = "llm_request_started";
