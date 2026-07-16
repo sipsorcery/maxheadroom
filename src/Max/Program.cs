@@ -382,7 +382,9 @@ class Program
                         BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
                     }
                     streamed.Append(sentence).Append(' ');
-                    yield return sentence;
+                    // Speak sanitized text (no markdown for the TTS to verbalise); keep the
+                    // raw reply for the return value / speech log.
+                    yield return LlmShared.SanitizeForSpeech(sentence);
                 }
                 BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
             }
@@ -417,7 +419,8 @@ class Program
                 BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
             }
             reply.Append(sentence).Append(' ');
-            await sentences.Writer.WriteAsync(sentence);
+            // Speak sanitized text; keep the raw reply for the return value / speech log.
+            await sentences.Writer.WriteAsync(LlmShared.SanitizeForSpeech(sentence));
         }
         sentences.Writer.Complete();
         BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
