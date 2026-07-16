@@ -26,8 +26,15 @@ on:
       - "claude/**"
       - "codex/**"
 
+# contents: write lets the job append results to the bench-data branch.
 permissions:
-  contents: read
+  contents: write
+
+# Serialize runs: two bench passes against the same instance would fight over
+# /bench/reset, and concurrent pushes to bench-data would conflict.
+concurrency:
+  group: bench
+  cancel-in-progress: false
 
 jobs:
   bench:
@@ -52,6 +59,7 @@ jobs:
           ITERATIONS="${{ github.event.inputs.iterations || '5' }}"
           dotnet run --project src/MaxBench -c Release -- all \
             --target "$TARGET" --iterations "$ITERATIONS" --json bench-results.json \
+            --label "${GITHUB_SHA::8}" \
             | tee bench-summary.md
           cat bench-summary.md >> "$GITHUB_STEP_SUMMARY"
 
@@ -64,3 +72,18 @@ jobs:
             bench-results.json
             bench-summary.md
           if-no-files-found: ignore
+
+      - name: Append to bench history (bench-data branch)
+        if: success()
+        run: |
+          git config user.name "bench-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git fetch origin bench-data
+          git worktree add ../bench-data origin/bench-data
+          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          cp bench-results.json "../bench-data/runs/${STAMP}-${GITHUB_SHA::8}.json"
+          dotnet run --project src/MaxBench -c Release -- history --history-dir ../bench-data
+          cd ../bench-data
+          git add -A
+          git commit -m "bench: ${STAMP} ${GITHUB_SHA::8} (${{ github.event_name }})"
+          git push origin HEAD:bench-data

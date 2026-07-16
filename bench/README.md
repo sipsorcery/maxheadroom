@@ -26,8 +26,17 @@ dotnet run --project src/MaxBench -c Release -- all --target https://max-claude.
 Modes: `ask` (default 5 iterations, `--iterations N`), `stt`, `report`, `all`.
 Markdown summary goes to stdout; `--json` writes machine-readable results.
 
-CI: `.github/workflows/bench.yml` runs this on demand (workflow_dispatch) and
-nightly, publishing the summary to the job page and the JSON as an artifact.
+CI: `.github/workflows/bench.yml` runs this on demand (workflow_dispatch),
+nightly, and on pushes to agent branches, publishing the summary to the job
+page and the JSON as an artifact.
+
+## Trend history
+
+Every CI run appends its results to the **[`bench-data` branch](../../../tree/bench-data)**:
+one JSON per run under `runs/`, plus a regenerated
+**[history.md](../../../blob/bench-data/history.md)** with a most-recent-first
+table and SVG trend charts (latency p50s and WER over time). Regenerate locally
+with `dotnet run --project src/MaxBench -- history --history-dir <dir>`.
 
 ## Corpus
 
