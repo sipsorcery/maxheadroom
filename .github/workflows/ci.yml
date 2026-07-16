@@ -41,3 +41,7 @@ jobs:
 
       - name: Test
         run: dotnet test src/Max.slnx --configuration Release --no-build --logger "console;verbosity=normal"
+
+      - name: Test browser benchmark analysis
+        working-directory: benchmarks/webrtc
+        run: node --test

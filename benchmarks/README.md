@@ -48,3 +48,33 @@ Each selected recording is evaluated once clean and once with the manifest's
 WER, CER, engine latency, end-of-speech-to-final latency, and real-time factor.
 The existing TTS-to-STT round trip remains a smoke test; it is not used as the
 accuracy corpus.
+
+## Browser-observed WebRTC lip-sync benchmark
+
+The `webrtc` runner uses headless Chromium as a real WebRTC peer. It sends a fixed
+speech recording on a synthetic microphone track, receives Max's audio and video,
+and measures response-audio onset plus the first sustained inter-frame change in
+the mouth region.
+The signed `received_mouth_minus_audio_ms` value is positive when the mouth arrives
+after the audio and negative when it leads.
+
+The server benchmark API is opt-in with `BENCHMARK_ENDPOINT_ENABLED=true`. The
+client creates a session before SDP exchange, waits for Max's connection greeting
+to finish, then arms the session. Server events decompose end-of-speech through STT,
+LLM, audio handoff and the first generated mouth frame. Wav2Lip inference, encode,
+effective-FPS, dropped-tick and mouth-frame-lateness counters are observational and
+do not alter RTP timestamps or media payloads.
+
+```bash
+cd benchmarks/webrtc
+npm install
+npx playwright install chromium
+node run.mjs --url https://max.sipsorcery.com --audio ./prompt.wav
+```
+
+The input must end with 600 ms of silence (override with
+`--trailing-silence-ms`). That fixed transition lets the client mark speech end
+before VAD produces its final transcript.
+
+Results are schema-v1 JSON. A failed run also retains a short WebM diagnostic
+recording; successful runs discard it.
