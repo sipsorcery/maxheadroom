@@ -1,0 +1,27 @@
+{
+  "target": "https://max-claude.sipsorcery.com",
+  "utc": "2026-07-16T22:34:54.3717992Z",
+  "mode": "all",
+  "label": "f3c2cf28",
+  "llm_model": "llama-4-maverick",
+  "ask": {
+    "iterations": 5,
+    "failures": 0,
+    "client_ms": [
+      2795.3,
+      1594.7,
+      1437.9,
+      1917.8,
+      3754.3
+    ],
+    "first_audio_ms": [
+      2174,
+      4047,
+      4061,
+      4688,
+      8458
+    ],
+    "server_aggregates": null
+  },
+  "server_metrics": null
+}
