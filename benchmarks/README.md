@@ -33,3 +33,18 @@ headers (HTTP streaming clients), first content token, first sentence, and
 completion. In-process LLMs do not have an HTTP headers boundary, so that
 metric is omitted rather than fabricated. TTS implementations report the
 first synthesized audio and first audio handoff to the WebRTC source.
+
+## STT accuracy and latency benchmark
+
+`stt/mini-librispeech-v1.json` pins the Mini LibriSpeech SLR31 regression corpus
+to its OpenSLR archive URL and MD5. The source page documents the corpus as CC
+BY 4.0. The archive is downloaded by the benchmark environment and is not
+committed to this repository. The deterministic selector uses at least four
+speakers, reads the expected `.trans.txt` references, and caps the run at 32
+utterances.
+
+Each selected recording is evaluated once clean and once with the manifest's
+20 dB additive-noise transform. Results report per-utterance and aggregate
+WER, CER, engine latency, end-of-speech-to-final latency, and real-time factor.
+The existing TTS-to-STT round trip remains a smoke test; it is not used as the
+accuracy corpus.

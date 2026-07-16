@@ -96,6 +96,9 @@ public sealed class BenchmarkCaseResult
     [JsonPropertyName("metricsMilliseconds")]
     public Dictionary<string, double> MetricsMilliseconds { get; init; } = new(StringComparer.Ordinal);
 
+    [JsonPropertyName("metrics")]
+    public Dictionary<string, double> Metrics { get; init; } = new(StringComparer.Ordinal);
+
     [JsonPropertyName("events")]
     public List<BenchmarkEventSample> Events { get; init; } = new();
 

@@ -1,0 +1,30 @@
+{
+  "manifestVersion": 1,
+  "corpusId": "openslr-slr31-mini-librispeech",
+  "license": "CC BY 4.0",
+  "sourcePage": "https://openslr.org/31/",
+  "archiveUrl": "https://openslr.trmal.net/resources/31/dev-clean-2.tar.gz",
+  "archiveFile": "dev-clean-2.tar.gz",
+  "archiveMd5": "6d7ab67ac6a1d2c993d050e16d61080d",
+  "expectedTranscriptGlob": "LibriSpeech/dev-clean/*/*/*.trans.txt",
+  "audioSampleRateHz": 16000,
+  "selection": {
+    "minimumDistinctSpeakers": 4,
+    "maximumUtterances": 32,
+    "sortBy": "speakerId/utteranceId"
+  },
+  "noiseVariants": [
+    {
+      "name": "clean",
+      "snrDb": null,
+      "seed": 0
+    },
+    {
+      "name": "modest-noise",
+      "snrDb": 20,
+      "seed": 3101,
+      "algorithm": "deterministic additive white noise, normalized to measured signal RMS"
+    }
+  ],
+  "normalization": "lowercase, punctuation collapsed, whitespace normalized; spaces omitted for CER"
+}
