@@ -24,8 +24,9 @@ static class History
 {
     private sealed record Run(
         DateTimeOffset Utc, string Label, string LlmModel,
-        double? FirstAudioP50, double? LlmFirstP50, double? LlmCompleteP50,
-        double? TtsSynthP50, double? LipsyncFirstP50, double? Wav2LipP50, double? Wer);
+        double? FirstAudioP50, double? LlmTtftP50, double? LlmFirstP50, double? LlmCompleteP50,
+        double? TtsFirstChunkP50, double? TtsSynthP50, double? LipsyncFirstP50,
+        double? RenderTickP95, double? Wav2LipP50, double? Wer);
 
     public static void Generate(string historyDir)
     {
@@ -42,13 +43,14 @@ static class History
 
         File.WriteAllText(Path.Combine(historyDir, "history.md"), BuildMarkdown(runs));
         File.WriteAllText(Path.Combine(historyDir, "charts", "latency.svg"), BuildChart(
-            "Latency p50 (ms) — lower is better", runs,
+            "Latency (ms, p50 unless noted) — lower is better", runs,
             [
                 ("first audio (e2e)", "#d62728", r => r.FirstAudioP50),
-                ("tts synth", "#1f77b4", r => r.TtsSynthP50),
+                ("tts first chunk", "#1f77b4", r => r.TtsFirstChunkP50),
+                ("llm ttft", "#ff7f0e", r => r.LlmTtftP50),
                 ("llm first sentence", "#2ca02c", r => r.LlmFirstP50),
                 ("lipsync first mouth", "#9467bd", r => r.LipsyncFirstP50),
-                ("wav2lip infer", "#8c564b", r => r.Wav2LipP50),
+                ("render tick p95", "#8c564b", r => r.RenderTickP95),
             ], "ms"));
         File.WriteAllText(Path.Combine(historyDir, "charts", "wer.svg"), BuildChart(
             "STT word error rate (%) — lower is better", runs,
@@ -69,10 +71,13 @@ static class History
                 j["label"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(path),
                 j["llm_model"]?.GetValue<string>() ?? "—",
                 P50FromList(j["ask"]?["first_audio_ms"]),
+                Num(agg?["llm_ttft"]?["p50"]),
                 Num(agg?["llm_first_sentence"]?["p50"]),
                 Num(agg?["llm_stream_complete"]?["p50"]),
+                Num(agg?["tts_first_chunk"]?["p50"] ?? srv?["tts_first_chunk"]?["p50"]),
                 Num(agg?["tts_synth"]?["p50"]),
                 Num(srv?["lipsync_first_mouth"]?["p50"]),
+                Num(srv?["render_tick"]?["p95"]),
                 Num(srv?["wav2lip_infer"]?["p50"]),
                 Num(j["stt"]?["overall_wer"]));
         }
@@ -105,13 +110,13 @@ static class History
         sb.AppendLine();
         sb.AppendLine("![wer](charts/wer.svg)");
         sb.AppendLine();
-        sb.AppendLine("| run (UTC) | label | LLM model | first audio (e2e) | llm first | llm done | tts synth | lipsync first | wav2lip | WER |");
+        sb.AppendLine("| run (UTC) | label | LLM model | first audio (e2e) | llm ttft | llm first | tts first chunk | lipsync first | render tick p95 | WER |");
         sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
         foreach (var r in Enumerable.Reverse(runs))
         {
             sb.AppendLine(
-                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {r.LlmModel} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmFirstP50)} | " +
-                $"{Fmt(r.LlmCompleteP50)} | {Fmt(r.TtsSynthP50)} | {Fmt(r.LipsyncFirstP50)} | {Fmt(r.Wav2LipP50)} | " +
+                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {r.LlmModel} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmTtftP50)} | " +
+                $"{Fmt(r.LlmFirstP50)} | {Fmt(r.TtsFirstChunkP50)} | {Fmt(r.LipsyncFirstP50)} | {Fmt(r.RenderTickP95)} | " +
                 $"{(r.Wer is double w ? w.ToString("P1", CultureInfo.InvariantCulture) : "—")} |");
         }
         sb.AppendLine();
@@ -121,11 +126,11 @@ static class History
         sb.AppendLine();
         sb.AppendLine("- **LLM model** — which model generated the replies for that run (`GET /version`'s `llmModel`: the in-process GGUF filename, or the configured endpoint model name). Model swaps are a config change, not a code change, so this is the only thing that tells two runs with the same commit label apart. Runs from before this field existed show `—`.");
         sb.AppendLine("- **first audio (e2e)** — *end-to-end LLM reply latency.* Wall-clock time from the bench posting a prompt to `/ask` until the first audible (non-silent) audio packet arrives over the WebRTC connection. The single number that best represents \"how long the viewer waits before Max starts talking.\"");
-        sb.AppendLine("- **llm first** — server-side time from prompt received to the first sentence of the LLM's reply becoming available for speech (`llm_first_sentence`). A lower bound on *first audio*: it excludes TTS synthesis and network/RTP time.");
-        sb.AppendLine("- **llm done** — server-side time from prompt received to the full LLM reply being assembled (`llm_stream_complete`). Reply length dependent, since longer answers keep streaming longer.");
-        sb.AppendLine("- **tts synth** — time sherpa-onnx's TTS engine spends synthesising one sentence's audio (`tts_synth`). Historically the pipeline's dominant cost; noisy across runs because sentence length varies with the LLM's reply.");
+        sb.AppendLine("- **llm ttft** — time to the LLM's first token off the wire (`llm_ttft`). The purest measure of model/endpoint responsiveness; program target <400ms.");
+        sb.AppendLine("- **llm first** — server-side time from prompt received to the first *sentence* of the LLM's reply becoming available for speech (`llm_first_sentence`). The gap above *llm ttft* is sentence-chunking cost - the wait for the whole first sentence to generate.");
+        sb.AppendLine("- **tts first chunk** — time from an utterance starting until the first playable audio exists (`tts_first_chunk`). For blocking engines (sherpa) this equals whole-sentence synthesis; for streaming engines (ElevenLabs) it is the first websocket chunk. Program target <300ms. (Full synth cost remains in the run JSON as `tts_synth`.)");
         sb.AppendLine("- **lipsync first** — time from an utterance's audio being handed to the avatar renderer until the first lip-synced (Wav2Lip) mouth frame is ready (`lipsync_first_mouth`). Governs how quickly the avatar's mouth starts moving once it begins speaking.");
-        sb.AppendLine("- **wav2lip** — time for a single Wav2Lip ONNX inference call, i.e. rendering one mouth frame from a window of mel-spectrogram audio (`wav2lip_infer`). Runs continuously while the avatar speaks (~25 times/second of audio), so this is a per-frame cost, not a one-off latency.");
+        sb.AppendLine("- **render tick p95** — 95th percentile of the whole per-frame render cost while speaking: mouth inference + frame compose + video encode (`render_tick`). The budget at 25fps is 40ms; a p95 above that means dropped frames and a laggy face. (Per-inference `wav2lip_infer` remains in the run JSON.)");
         sb.AppendLine("- **WER** — *word error rate* of speech-to-text. The bench sends a fixed reference audio clip (Harvard sentences, `bench/corpus.json`) through the same offline recogniser the live WebRTC audio path uses, then scores the transcript against the known-correct reference text. Lower is better; 0% is a perfect transcript.");
         return sb.ToString();
 
