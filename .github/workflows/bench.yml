@@ -19,6 +19,12 @@ on:
         default: "5"
   schedule:
     - cron: "17 3 * * *"   # nightly, off the hour to be a good citizen
+  # workflow_dispatch/schedule only register once this file reaches the default
+  # branch; push lets agent branches exercise the bench before that.
+  push:
+    branches:
+      - "claude/**"
+      - "codex/**"
 
 permissions:
   contents: read
