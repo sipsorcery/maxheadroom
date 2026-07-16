@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sipsorcery/maxheadroom/benchmarks/schema/v1.json",
+  "title": "Max benchmark result v1",
+  "type": "object",
+  "required": ["schemaVersion", "runId", "startedAtUtc", "source", "environment", "configuration", "cases", "summaries"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "runId": { "type": "string", "minLength": 1 },
+    "startedAtUtc": { "type": "string", "format": "date-time" },
+    "source": {
+      "type": "object",
+      "properties": {
+        "commitSha": { "type": "string" },
+        "imageDigest": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["machineName", "operatingSystem", "processArchitecture", "framework", "processorCount"],
+      "properties": {
+        "machineName": { "type": "string" },
+        "operatingSystem": { "type": "string" },
+        "processArchitecture": { "type": "string" },
+        "framework": { "type": "string" },
+        "processorCount": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "configuration": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "cases": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/case" }
+    },
+    "summaries": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/summary" }
+    }
+  },
+  "$defs": {
+    "event": {
+      "type": "object",
+      "required": ["name", "elapsedMilliseconds"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$" },
+        "elapsedMilliseconds": { "type": "number", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": ["name", "correlationId", "iteration", "warm", "succeeded", "metricsMilliseconds", "events"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "correlationId": { "type": "string", "minLength": 1 },
+        "iteration": { "type": "integer", "minimum": 0 },
+        "warm": { "type": "boolean" },
+        "succeeded": { "type": "boolean" },
+        "metricsMilliseconds": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0 }
+        },
+        "events": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/event" }
+        },
+        "error": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "summary": {
+      "type": "object",
+      "required": ["count"],
+      "properties": {
+        "count": { "type": "integer", "minimum": 0 },
+        "minimum": { "type": "number" },
+        "maximum": { "type": "number" },
+        "mean": { "type": "number" },
+        "p50": { "type": "number" },
+        "p90": { "type": "number" },
+        "p95": { "type": "number" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
