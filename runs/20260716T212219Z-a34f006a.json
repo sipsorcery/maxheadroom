@@ -1,0 +1,122 @@
+{
+  "target": "https://max-claude.sipsorcery.com",
+  "utc": "2026-07-16T21:20:48.5188441Z",
+  "mode": "all",
+  "label": "a34f006a",
+  "ask": {
+    "iterations": 5,
+    "failures": 0,
+    "client_ms": [
+      2378.7,
+      714.6,
+      676.8,
+      759.4,
+      1005.4
+    ],
+    "first_audio_ms": [
+      1976,
+      6243,
+      3047,
+      4137,
+      4272
+    ],
+    "server_aggregates": {
+      "tts_synth": {
+        "count": 11,
+        "mean": 2524.4,
+        "min": 890.6392,
+        "p50": 1709.6,
+        "p95": 5922.9,
+        "max": 8345.4723
+      },
+      "wav2lip_infer": {
+        "count": 222,
+        "mean": 79.6,
+        "min": 49.8069,
+        "p50": 74.1,
+        "p95": 115.5,
+        "max": 161.0982
+      },
+      "lipsync_first_mouth": {
+        "count": 11,
+        "mean": 343.3,
+        "min": 187,
+        "p50": 291,
+        "p95": 679,
+        "max": 967
+      },
+      "llm_first_sentence": {
+        "count": 5,
+        "mean": 871.2,
+        "min": 406.4035,
+        "p50": 552.9,
+        "p95": 1933.5,
+        "max": 2252.679
+      },
+      "llm_stream_complete": {
+        "count": 5,
+        "mean": 1010.4,
+        "min": 578.1673,
+        "p50": 663.3,
+        "p95": 2005.6,
+        "max": 2279.6418
+      }
+    }
+  },
+  "stt": {
+    "overall_wer": 0.0375,
+    "clips": [
+      {
+        "name": "OSR_us_000_0010_8k.wav",
+        "wer": 0.0375,
+        "words": 80,
+        "errors": 3,
+        "stt_ms": 12815.8,
+        "audio_ms": 33623,
+        "transcript": "The birch canoe slid on the smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well. These days, a chicken leg is a rare dish. Rice is often served in round bowls. The juice of lemons makes fine punch. The box was thrown beside the park truck. The hogs were fed chopped corn and garbage. Four hours of steady work faced us. A large size in stockings is hard to sell."
+      }
+    ]
+  },
+  "server_metrics": {
+    "tts_synth": {
+      "count": 11,
+      "mean": 2524.4,
+      "min": 890.6392,
+      "p50": 1709.6,
+      "p95": 5922.9,
+      "max": 8345.4723
+    },
+    "wav2lip_infer": {
+      "count": 222,
+      "mean": 79.6,
+      "min": 49.8069,
+      "p50": 74.1,
+      "p95": 115.5,
+      "max": 161.0982
+    },
+    "lipsync_first_mouth": {
+      "count": 11,
+      "mean": 343.3,
+      "min": 187,
+      "p50": 291,
+      "p95": 679,
+      "max": 967
+    },
+    "llm_first_sentence": {
+      "count": 5,
+      "mean": 871.2,
+      "min": 406.4035,
+      "p50": 552.9,
+      "p95": 1933.5,
+      "max": 2252.679
+    },
+    "llm_stream_complete": {
+      "count": 5,
+      "mean": 1010.4,
+      "min": 578.1673,
+      "p50": 663.3,
+      "p95": 2005.6,
+      "max": 2279.6418
+    }
+  }
+}
