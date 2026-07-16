@@ -14,54 +14,59 @@
 <line x1="70" y1="44.0" x2="880" y2="44.0" stroke="#e5e5e5"/>
 <text x="64" y="48.0" font-size="11" fill="#666" text-anchor="end">4617ms</text>
 <text x="70.0" y="342" font-size="11" fill="#666" text-anchor="start">07-16 16:02</text>
-<text x="532.9" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 21:10</text>
-<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-16 21:38</text>
-<polyline points="70.0,153.5 185.7,169.8 417.1,130.9 532.9,249.4 648.6,73.1 764.3,186.2 880.0,80.4" fill="none" stroke="#d62728" stroke-width="2"/>
+<text x="475.0" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 21:10</text>
+<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-16 21:55</text>
+<polyline points="70.0,153.5 171.2,169.8 373.8,130.9 475.0,249.4 576.2,73.1 677.5,186.2 778.8,80.4 880.0,148.2" fill="none" stroke="#d62728" stroke-width="2"/>
 <circle cx="70.0" cy="153.5" r="3" fill="#d62728"/>
-<circle cx="185.7" cy="169.8" r="3" fill="#d62728"/>
-<circle cx="417.1" cy="130.9" r="3" fill="#d62728"/>
-<circle cx="532.9" cy="249.4" r="3" fill="#d62728"/>
-<circle cx="648.6" cy="73.1" r="3" fill="#d62728"/>
-<circle cx="764.3" cy="186.2" r="3" fill="#d62728"/>
-<circle cx="880.0" cy="80.4" r="3" fill="#d62728"/>
+<circle cx="171.2" cy="169.8" r="3" fill="#d62728"/>
+<circle cx="373.8" cy="130.9" r="3" fill="#d62728"/>
+<circle cx="475.0" cy="249.4" r="3" fill="#d62728"/>
+<circle cx="576.2" cy="73.1" r="3" fill="#d62728"/>
+<circle cx="677.5" cy="186.2" r="3" fill="#d62728"/>
+<circle cx="778.8" cy="80.4" r="3" fill="#d62728"/>
+<circle cx="880.0" cy="148.2" r="3" fill="#d62728"/>
 <rect x="70.0" y="358" width="10" height="10" fill="#d62728"/>
 <text x="84.0" y="367" font-size="11" fill="#333">first audio (e2e)</text>
-<polyline points="70.0,173.4 185.7,64.7 417.1,132.7 532.9,165.7 648.6,220.3 880.0,132.6" fill="none" stroke="#1f77b4" stroke-width="2"/>
+<polyline points="70.0,173.4 171.2,64.7 373.8,132.7 475.0,165.7 576.2,220.3 778.8,132.6 880.0,147.3" fill="none" stroke="#1f77b4" stroke-width="2"/>
 <circle cx="70.0" cy="173.4" r="3" fill="#1f77b4"/>
-<circle cx="185.7" cy="64.7" r="3" fill="#1f77b4"/>
-<circle cx="417.1" cy="132.7" r="3" fill="#1f77b4"/>
-<circle cx="532.9" cy="165.7" r="3" fill="#1f77b4"/>
-<circle cx="648.6" cy="220.3" r="3" fill="#1f77b4"/>
-<circle cx="880.0" cy="132.6" r="3" fill="#1f77b4"/>
+<circle cx="171.2" cy="64.7" r="3" fill="#1f77b4"/>
+<circle cx="373.8" cy="132.7" r="3" fill="#1f77b4"/>
+<circle cx="475.0" cy="165.7" r="3" fill="#1f77b4"/>
+<circle cx="576.2" cy="220.3" r="3" fill="#1f77b4"/>
+<circle cx="778.8" cy="132.6" r="3" fill="#1f77b4"/>
+<circle cx="880.0" cy="147.3" r="3" fill="#1f77b4"/>
 <rect x="232.0" y="358" width="10" height="10" fill="#1f77b4"/>
 <text x="246.0" y="367" font-size="11" fill="#333">tts synth</text>
-<polyline points="70.0,280.9 185.7,287.3 417.1,282.4 532.9,282.3 648.6,290.5 880.0,244.5" fill="none" stroke="#2ca02c" stroke-width="2"/>
+<polyline points="70.0,280.9 171.2,287.3 373.8,282.4 475.0,282.3 576.2,290.5 778.8,244.5 880.0,255.9" fill="none" stroke="#2ca02c" stroke-width="2"/>
 <circle cx="70.0" cy="280.9" r="3" fill="#2ca02c"/>
-<circle cx="185.7" cy="287.3" r="3" fill="#2ca02c"/>
-<circle cx="417.1" cy="282.4" r="3" fill="#2ca02c"/>
-<circle cx="532.9" cy="282.3" r="3" fill="#2ca02c"/>
-<circle cx="648.6" cy="290.5" r="3" fill="#2ca02c"/>
-<circle cx="880.0" cy="244.5" r="3" fill="#2ca02c"/>
+<circle cx="171.2" cy="287.3" r="3" fill="#2ca02c"/>
+<circle cx="373.8" cy="282.4" r="3" fill="#2ca02c"/>
+<circle cx="475.0" cy="282.3" r="3" fill="#2ca02c"/>
+<circle cx="576.2" cy="290.5" r="3" fill="#2ca02c"/>
+<circle cx="778.8" cy="244.5" r="3" fill="#2ca02c"/>
+<circle cx="880.0" cy="255.9" r="3" fill="#2ca02c"/>
 <rect x="394.0" y="358" width="10" height="10" fill="#2ca02c"/>
 <text x="408.0" y="367" font-size="11" fill="#333">llm first sentence</text>
-<polyline points="70.0,303.4 185.7,307.1 301.4,304.0 417.1,305.5 532.9,293.9 648.6,306.4 880.0,295.3" fill="none" stroke="#9467bd" stroke-width="2"/>
+<polyline points="70.0,303.4 171.2,307.1 272.5,304.0 373.8,305.5 475.0,293.9 576.2,306.4 778.8,295.3 880.0,292.1" fill="none" stroke="#9467bd" stroke-width="2"/>
 <circle cx="70.0" cy="303.4" r="3" fill="#9467bd"/>
-<circle cx="185.7" cy="307.1" r="3" fill="#9467bd"/>
-<circle cx="301.4" cy="304.0" r="3" fill="#9467bd"/>
-<circle cx="417.1" cy="305.5" r="3" fill="#9467bd"/>
-<circle cx="532.9" cy="293.9" r="3" fill="#9467bd"/>
-<circle cx="648.6" cy="306.4" r="3" fill="#9467bd"/>
-<circle cx="880.0" cy="295.3" r="3" fill="#9467bd"/>
+<circle cx="171.2" cy="307.1" r="3" fill="#9467bd"/>
+<circle cx="272.5" cy="304.0" r="3" fill="#9467bd"/>
+<circle cx="373.8" cy="305.5" r="3" fill="#9467bd"/>
+<circle cx="475.0" cy="293.9" r="3" fill="#9467bd"/>
+<circle cx="576.2" cy="306.4" r="3" fill="#9467bd"/>
+<circle cx="778.8" cy="295.3" r="3" fill="#9467bd"/>
+<circle cx="880.0" cy="292.1" r="3" fill="#9467bd"/>
 <rect x="556.0" y="358" width="10" height="10" fill="#9467bd"/>
 <text x="570.0" y="367" font-size="11" fill="#333">lipsync first mouth</text>
-<polyline points="70.0,319.8 185.7,320.1 301.4,315.8 417.1,320.4 532.9,319.8 648.6,319.5 880.0,319.6" fill="none" stroke="#8c564b" stroke-width="2"/>
+<polyline points="70.0,319.8 171.2,320.1 272.5,315.8 373.8,320.4 475.0,319.8 576.2,319.5 778.8,319.6 880.0,319.8" fill="none" stroke="#8c564b" stroke-width="2"/>
 <circle cx="70.0" cy="319.8" r="3" fill="#8c564b"/>
-<circle cx="185.7" cy="320.1" r="3" fill="#8c564b"/>
-<circle cx="301.4" cy="315.8" r="3" fill="#8c564b"/>
-<circle cx="417.1" cy="320.4" r="3" fill="#8c564b"/>
-<circle cx="532.9" cy="319.8" r="3" fill="#8c564b"/>
-<circle cx="648.6" cy="319.5" r="3" fill="#8c564b"/>
-<circle cx="880.0" cy="319.6" r="3" fill="#8c564b"/>
+<circle cx="171.2" cy="320.1" r="3" fill="#8c564b"/>
+<circle cx="272.5" cy="315.8" r="3" fill="#8c564b"/>
+<circle cx="373.8" cy="320.4" r="3" fill="#8c564b"/>
+<circle cx="475.0" cy="319.8" r="3" fill="#8c564b"/>
+<circle cx="576.2" cy="319.5" r="3" fill="#8c564b"/>
+<circle cx="778.8" cy="319.6" r="3" fill="#8c564b"/>
+<circle cx="880.0" cy="319.8" r="3" fill="#8c564b"/>
 <rect x="718.0" y="358" width="10" height="10" fill="#8c564b"/>
 <text x="732.0" y="367" font-size="11" fill="#333">wav2lip infer</text>
 </svg>

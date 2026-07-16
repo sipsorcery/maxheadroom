@@ -14,15 +14,16 @@
 <line x1="70" y1="44.0" x2="880" y2="44.0" stroke="#e5e5e5"/>
 <text x="64" y="48.0" font-size="11" fill="#666" text-anchor="end">4%</text>
 <text x="70.0" y="342" font-size="11" fill="#666" text-anchor="start">07-16 16:02</text>
-<text x="532.9" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 21:10</text>
-<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-16 21:38</text>
-<polyline points="70.0,64.7 185.7,64.7 301.4,64.7 417.1,64.7 532.9,64.7 648.6,64.7 880.0,64.7" fill="none" stroke="#d62728" stroke-width="2"/>
+<text x="475.0" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 21:10</text>
+<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-16 21:55</text>
+<polyline points="70.0,64.7 171.2,64.7 272.5,64.7 373.8,64.7 475.0,64.7 576.2,64.7 778.8,64.7 880.0,64.7" fill="none" stroke="#d62728" stroke-width="2"/>
 <circle cx="70.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="185.7" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="301.4" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="417.1" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="532.9" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="648.6" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="171.2" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="272.5" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="373.8" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="475.0" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="576.2" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="778.8" cy="64.7" r="3" fill="#d62728"/>
 <circle cx="880.0" cy="64.7" r="3" fill="#d62728"/>
 <rect x="70.0" y="358" width="10" height="10" fill="#d62728"/>
 <text x="84.0" y="367" font-size="11" fill="#333">WER</text>
