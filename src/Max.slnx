@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="AvatarPipeline/AvatarPipeline.csproj" />
+  <Project Path="Max/Max.csproj" />
+</Solution>
