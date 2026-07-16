@@ -1,0 +1,60 @@
+# Max avatar performance bench — measures LLM reply latency, STT accuracy (WER)
+# and lip-sync stage timings against a deployed instance (default: the claude
+# bench instance, which runs with BENCH_ENDPOINTS=true).
+#
+# Deliberately measurement-only: deterministic script, no AI involvement, free
+# on public-repo runners. Cron requires this file on the default branch; until
+# then trigger it manually against the claude branch via workflow_dispatch.
+
+name: bench
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: Base URL of the Max instance to bench
+        default: https://max-claude.sipsorcery.com
+      iterations:
+        description: Number of /ask prompts
+        default: "5"
+  schedule:
+    - cron: "17 3 * * *"   # nightly, off the hour to be a good citizen
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache STT corpus
+        uses: actions/cache@v4
+        with:
+          path: bench/cache
+          key: bench-corpus-${{ hashFiles('bench/corpus.json') }}
+
+      - name: Run bench
+        run: |
+          TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
+          ITERATIONS="${{ github.event.inputs.iterations || '5' }}"
+          dotnet run --project src/MaxBench -c Release -- all \
+            --target "$TARGET" --iterations "$ITERATIONS" --json bench-results.json \
+            | tee bench-summary.md
+          cat bench-summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results-${{ github.run_number }}
+          path: |
+            bench-results.json
+            bench-summary.md
+          if-no-files-found: ignore

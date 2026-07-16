@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Performance bench client for the Max avatar. Measures LLM reply latency,
+       STT transcription accuracy (WER) and lip-sync lag against a running Max
+       instance (local or deployed). Run modes: ask | stt | report | all.
+       See bench/README.md for usage; .github/workflows/bench.yml runs it in CI. -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>demo.bench</RootNamespace>
+  </PropertyGroup>
+
+</Project>

@@ -256,6 +256,51 @@ class Program
             return Results.Text(text);
         });
 
+        // Bench endpoints are opt-in (BENCH_ENDPOINTS=true) so production deployments
+        // don't expose internals; the claude bench instance enables them via config.
+        if (string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase))
+        {
+            app.MapGet("/bench/metrics", () => Results.Json(new
+            {
+                aggregates = BenchMetrics.Aggregates(),
+                events = BenchMetrics.Snapshot(),
+            }));
+
+            app.MapPost("/bench/reset", () => { BenchMetrics.Reset(); return Results.Ok(); });
+
+            // WAV in (8kHz/16kHz mono 16-bit PCM), transcript out. Drives the same offline
+            // recogniser the WebRTC audio path uses, so WER measured here matches live STT.
+            app.MapPost("/bench/stt", async (HttpRequest request) =>
+            {
+                if (!SherpaSpeechRecognizer.FilesPresent())
+                {
+                    return Results.Problem("STT model files not present.", statusCode: 503);
+                }
+
+                using var ms = new MemoryStream();
+                await request.Body.CopyToAsync(ms);
+                short[] pcm8k;
+                try
+                {
+                    pcm8k = WavUtils.ReadMono8k(ms.ToArray());
+                }
+                catch (Exception excp)
+                {
+                    return Results.BadRequest($"Unsupported WAV: {excp.Message}");
+                }
+
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                using var recognizer = new SherpaSpeechRecognizer();
+                var transcript = await recognizer.TestTranscribeAsync(pcm8k);
+                return Results.Json(new
+                {
+                    transcript,
+                    ms = Math.Round(sw.Elapsed.TotalMilliseconds, 1),
+                    audioMs = pcm8k.Length / 8,
+                });
+            });
+        }
+
         await app.RunAsync();
     }
 
@@ -277,6 +322,8 @@ class Program
             return string.Empty;
         }
 
+        var askClock = System.Diagnostics.Stopwatch.StartNew();
+
         // A streaming speaker consumes the LLM token stream directly over one WebSocket; tee the
         // sentences into a builder so we can still return the assembled reply text.
         if (speaker is IStreamingAvatarSpeaker streaming)
@@ -286,9 +333,14 @@ class Program
             {
                 await foreach (var sentence in _llm.StreamReplyAsync(prompt))
                 {
+                    if (streamed.Length == 0)
+                    {
+                        BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                    }
                     streamed.Append(sentence).Append(' ');
                     yield return sentence;
                 }
+                BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
             }
 
             await streaming.SpeakStreamAsync(Tee());
@@ -316,10 +368,15 @@ class Program
         var reply = new StringBuilder();
         await foreach (var sentence in _llm.StreamReplyAsync(prompt))
         {
+            if (reply.Length == 0)
+            {
+                BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+            }
             reply.Append(sentence).Append(' ');
             await sentences.Writer.WriteAsync(sentence);
         }
         sentences.Writer.Complete();
+        BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
 
         var text = reply.ToString().Trim();
         _logger.LogInformation("LLM reply: {Reply}", text);
@@ -385,7 +442,9 @@ class Program
 
     private static void PublishUiEvent(string type, string text)
     {
-        var message = JsonSerializer.Serialize(new { type, text });
+        // ts lets an external bench client compute server-side latencies from the
+        // SSE stream alone; the browser UI ignores unknown fields.
+        var message = JsonSerializer.Serialize(new { type, text, ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() });
         foreach (var client in _uiEventClients.Values)
         {
             client.Writer.TryWrite(message);
