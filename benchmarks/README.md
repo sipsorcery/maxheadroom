@@ -19,3 +19,17 @@ The first stable event names cover the full spoken-response path from
 `speech_end` through STT, LLM, TTS, audio and the first correlated mouth frame.
 Individual benchmark issues will add the instrumentation and runners that
 populate this contract.
+
+## LLM and first-audio benchmark
+
+Set `BENCHMARK_ENDPOINT_ENABLED=true` on a development instance and connect a
+browser viewer. `POST /benchmark/llm` then runs the fixed `llm-latency-v1`
+prompt suite and returns a schema-v1 result. The endpoint is deliberately
+opt-in and requires an active viewer because `tts_audio_ready` and
+`audio_started` describe the real avatar audio path.
+
+The LLM metrics are measured from `prompt_accepted`: request start, response
+headers (HTTP streaming clients), first content token, first sentence, and
+completion. In-process LLMs do not have an HTTP headers boundary, so that
+metric is omitted rather than fabricated. TTS implementations report the
+first synthesized audio and first audio handoff to the WebRTC source.

@@ -17,6 +17,7 @@
 
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using demo.Performance;
 
 namespace demo;
 
@@ -40,6 +41,37 @@ public interface ILlmClient
 
     /// <summary>Streams the reply one sentence at a time as tokens arrive.</summary>
     IAsyncEnumerable<string> StreamReplyAsync(string prompt);
+
+    /// <summary>
+    /// Streams a reply while recording benchmark events. Protocol-aware implementations can
+    /// override this for precise response-header and raw-token timing; the default adapter
+    /// records the observable sentence-stream boundaries.
+    /// </summary>
+    async IAsyncEnumerable<string> StreamReplyAsync(string prompt, BenchmarkTimeline timeline)
+    {
+        if (timeline == null)
+        {
+            await foreach (var sentence in StreamReplyAsync(prompt))
+            {
+                yield return sentence;
+            }
+            yield break;
+        }
+
+        timeline.RecordOnce(BenchmarkEventNames.LlmRequestStarted);
+        var first = true;
+        await foreach (var sentence in StreamReplyAsync(prompt))
+        {
+            if (first)
+            {
+                timeline.RecordOnce(BenchmarkEventNames.LlmFirstToken);
+                timeline.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
+                first = false;
+            }
+            yield return sentence;
+        }
+        timeline.RecordOnce(BenchmarkEventNames.LlmComplete);
+    }
 }
 
 /// <summary>Bits shared by the LLM clients: the persona prompt and sentence chunking.</summary>

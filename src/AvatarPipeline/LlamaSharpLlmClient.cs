@@ -24,6 +24,7 @@ using System.IO;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using demo.Performance;
 using LLama;
 using LLama.Common;
 using LLama.Native;
@@ -143,10 +144,19 @@ public sealed class LlamaSharpLlmClient : ILlmClient, IDisposable
         }
     }
 
-    public async IAsyncEnumerable<string> StreamReplyAsync(string prompt)
+    public IAsyncEnumerable<string> StreamReplyAsync(string prompt) =>
+        StreamReplyAsyncCore(prompt, null);
+
+    public IAsyncEnumerable<string> StreamReplyAsync(string prompt, BenchmarkTimeline timeline) =>
+        StreamReplyAsyncCore(prompt, timeline);
+
+    private async IAsyncEnumerable<string> StreamReplyAsyncCore(string prompt, BenchmarkTimeline timeline)
     {
         var buffer = new StringBuilder();
         bool anyYielded = false;
+        bool firstToken = true;
+
+        timeline?.RecordOnce(BenchmarkEventNames.LlmRequestStarted);
 
         // Held for the whole enumeration: the underlying context must not be shared.
         await _inferLock.WaitAsync().ConfigureAwait(false);
@@ -155,6 +165,11 @@ public sealed class LlamaSharpLlmClient : ILlmClient, IDisposable
             await foreach (var token in InferAsync(prompt).ConfigureAwait(false))
             {
                 buffer.Append(token);
+                if (firstToken && !string.IsNullOrEmpty(token))
+                {
+                    timeline?.RecordOnce(BenchmarkEventNames.LlmFirstToken);
+                    firstToken = false;
+                }
 
                 string sentence;
                 while ((sentence = LlmShared.TakeSentence(buffer)) != null)
@@ -163,6 +178,7 @@ public sealed class LlamaSharpLlmClient : ILlmClient, IDisposable
                     {
                         continue;
                     }
+                    timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
                     anyYielded = true;
                     yield return sentence;
                 }
@@ -176,14 +192,19 @@ public sealed class LlamaSharpLlmClient : ILlmClient, IDisposable
         var remainder = buffer.ToString().Trim();
         if (remainder.Length > 0)
         {
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
             anyYielded = true;
             yield return remainder;
         }
 
         if (!anyYielded)
         {
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstToken);
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
             yield return prompt;
         }
+
+        timeline?.RecordOnce(BenchmarkEventNames.LlmComplete);
     }
 
     /// <summary>Formats the persona + prompt with the model's own chat template and streams tokens.</summary>

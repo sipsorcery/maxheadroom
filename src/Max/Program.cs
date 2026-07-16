@@ -34,6 +34,8 @@
 //   VISEME_LEAD_MS       - ms to lead the mouth ahead of the audio (default 0).
 //   ELEVENLABS_API_KEY (+ ELEVENLABS_VOICE_ID/MODEL/STT_MODEL/STREAMING/...) - cloud
 //                          speech engines; when set they take priority for TTS + STT.
+//   BENCHMARK_ENDPOINT_ENABLED - set true to expose POST /benchmark/llm while a viewer is
+//                          connected; benchmark output contains timings only, never secrets.
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
@@ -51,6 +53,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using demo.Performance;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
@@ -256,6 +259,21 @@ class Program
             return Results.Text(text);
         });
 
+        if (BenchmarkEndpointEnabled())
+        {
+            app.MapPost("/benchmark/llm", async () =>
+            {
+                var notReady = SpeakerNotReady();
+                if (notReady != null) { return notReady; }
+
+                var result = await BenchmarkPipelineRunner.RunAsync(
+                    BenchmarkPromptSuites.LlmLatencyV1,
+                    BenchmarkPromptSuites.LlmLatencyCases,
+                    (benchmarkCase, timeline, _) => AskAsync(benchmarkCase.Prompt, timeline));
+                return Results.Text(BenchmarkJson.Serialize(result), "application/json");
+            });
+        }
+
         await app.RunAsync();
     }
 
@@ -267,7 +285,9 @@ class Program
     /// finishes in the background. Shared by the /ask endpoint and the speech recogniser, so typing
     /// a prompt and speaking one drive the exact same path.
     /// </summary>
-    private static async Task<string> AskAsync(string prompt)
+    private static Task<string> AskAsync(string prompt) => AskAsync(prompt, null);
+
+    private static async Task<string> AskAsync(string prompt, BenchmarkTimeline timeline)
     {
         // Capture the speaker so a mid-stream disconnect (which nulls _speaker) can't throw inside
         // the background consumer below; bail quietly if the avatar can't speak right now.
@@ -277,6 +297,8 @@ class Program
             return string.Empty;
         }
 
+        timeline?.RecordOnce(BenchmarkEventNames.PromptAccepted);
+
         // A streaming speaker consumes the LLM token stream directly over one WebSocket; tee the
         // sentences into a builder so we can still return the assembled reply text.
         if (speaker is IStreamingAvatarSpeaker streaming)
@@ -284,14 +306,14 @@ class Program
             var streamed = new StringBuilder();
             async IAsyncEnumerable<string> Tee()
             {
-                await foreach (var sentence in _llm.StreamReplyAsync(prompt))
+                await foreach (var sentence in _llm.StreamReplyAsync(prompt, timeline))
                 {
                     streamed.Append(sentence).Append(' ');
                     yield return sentence;
                 }
             }
 
-            await streaming.SpeakStreamAsync(Tee());
+            await streaming.SpeakStreamAsync(Tee(), timeline);
             var streamedText = streamed.ToString().Trim();
             _logger.LogInformation("LLM reply: {Reply}", streamedText);
             return streamedText;
@@ -304,7 +326,7 @@ class Program
             {
                 await foreach (var sentence in sentences.Reader.ReadAllAsync())
                 {
-                    await speaker.SpeakAsync(sentence);
+                    await speaker.SpeakAsync(sentence, timeline);
                 }
             }
             catch (Exception excp)
@@ -320,6 +342,13 @@ class Program
             await sentences.Writer.WriteAsync(sentence);
         }
         sentences.Writer.Complete();
+
+        // The normal /ask path returns as soon as LLM generation completes, but a benchmark
+        // result must include the first audio boundary before it is serialized.
+        if (timeline != null)
+        {
+            await speakTask.ConfigureAwait(false);
+        }
 
         var text = reply.ToString().Trim();
         _logger.LogInformation("LLM reply: {Reply}", text);
@@ -406,7 +435,7 @@ class Program
             return Results.BadRequest(result.ToString());
         }
 
-        var answer = pc.createAnswer(new RTCAnswerOptions { X_WaitForIceGatheringToComplete= _waitForIceGatheringToSendAnswer });
+        var answer = pc.createAnswer(new RTCAnswerOptions { X_WaitForIceGatheringToComplete = _waitForIceGatheringToSendAnswer });
         _logger.LogDebug("Created SDP answer (wait for ICE gathering was {WaitForIceGathering}):\n{answer}", _waitForIceGatheringToSendAnswer, answer.sdp);
         await pc.setLocalDescription(answer);
 
@@ -547,6 +576,9 @@ class Program
         }
         return null;
     }
+
+    private static bool BenchmarkEndpointEnabled() =>
+        string.Equals(Environment.GetEnvironmentVariable("BENCHMARK_ENDPOINT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Builds the avatar renderer (the swappable IAvatarRenderer): the in-process Wav2Lip head

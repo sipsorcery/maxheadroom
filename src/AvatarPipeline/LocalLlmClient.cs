@@ -31,6 +31,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
+using demo.Performance;
 using Microsoft.Extensions.Logging;
 
 namespace demo;
@@ -115,20 +116,37 @@ public class LocalLlmClient : ILlmClient
     /// the call fails before producing anything, the prompt itself is yielded so the
     /// avatar still says something (mirrors <see cref="GenerateReplyAsync"/>).
     /// </summary>
-    public async IAsyncEnumerable<string> StreamReplyAsync(string prompt)
+    public IAsyncEnumerable<string> StreamReplyAsync(string prompt) =>
+        StreamReplyAsyncCore(prompt, null);
+
+    public IAsyncEnumerable<string> StreamReplyAsync(string prompt, BenchmarkTimeline timeline) =>
+        StreamReplyAsyncCore(prompt, timeline);
+
+    private async IAsyncEnumerable<string> StreamReplyAsyncCore(string prompt, BenchmarkTimeline timeline)
     {
+        timeline?.RecordOnce(BenchmarkEventNames.LlmRequestStarted);
+
         if (!IsConfigured)
         {
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstToken);
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
+            timeline?.RecordOnce(BenchmarkEventNames.LlmComplete);
             yield return prompt;
             yield break;
         }
 
         var buffer = new StringBuilder();
         bool anyYielded = false;
+        bool firstToken = true;
 
-        await foreach (var delta in ReadDeltasAsync(prompt).ConfigureAwait(false))
+        await foreach (var delta in ReadDeltasAsync(prompt, timeline).ConfigureAwait(false))
         {
             buffer.Append(delta);
+            if (firstToken && !string.IsNullOrEmpty(delta))
+            {
+                timeline?.RecordOnce(BenchmarkEventNames.LlmFirstToken);
+                firstToken = false;
+            }
 
             string sentence;
             while ((sentence = TakeSentence(buffer)) != null)
@@ -137,6 +155,7 @@ public class LocalLlmClient : ILlmClient
                 {
                     continue;
                 }
+                timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
                 anyYielded = true;
                 yield return sentence;
             }
@@ -146,14 +165,19 @@ public class LocalLlmClient : ILlmClient
         var remainder = buffer.ToString().Trim();
         if (remainder.Length > 0)
         {
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
             anyYielded = true;
             yield return remainder;
         }
 
         if (!anyYielded)
         {
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstToken);
+            timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
             yield return prompt;
         }
+
+        timeline?.RecordOnce(BenchmarkEventNames.LlmComplete);
     }
 
     /// <summary>
@@ -161,7 +185,7 @@ public class LocalLlmClient : ILlmClient
     /// OpenAI-style server-sent events. Network/parse errors are swallowed (logged) so
     /// the iterator simply ends, letting the caller fall back to the prompt.
     /// </summary>
-    private async IAsyncEnumerable<string> ReadDeltasAsync(string prompt)
+    private async IAsyncEnumerable<string> ReadDeltasAsync(string prompt, BenchmarkTimeline timeline = null)
     {
         var request = new HttpRequestMessage(HttpMethod.Post, _endpoint)
         {
@@ -187,6 +211,7 @@ public class LocalLlmClient : ILlmClient
             resp = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false);
             resp.EnsureSuccessStatusCode();
             netStream = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
+            timeline?.RecordOnce(BenchmarkEventNames.LlmResponseHeaders);
         }
         catch (Exception excp)
         {
