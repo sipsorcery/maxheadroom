@@ -398,8 +398,15 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             int frame = Math.Min(target, maxFrame);
             if (frame > _mouthFrame)
             {
+                bool firstOfUtterance = _mouthFrame < 0;
                 _mouthFrame = frame;
                 _lastMouth = Infer(mel, (int)(frame * MEL_PER_FRAME));
+                if (firstOfUtterance)
+                {
+                    // Lag from speech start (audio handed to the renderer) to the first
+                    // lip-synced mouth being ready for the encoder.
+                    BenchMetrics.Record("lipsync_first_mouth", _speechClock.ElapsedMilliseconds);
+                }
             }
         }
         return _lastMouth ?? _idleMouth;
@@ -456,6 +463,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         // The DirectML EP does not support concurrent Run calls on a session, and the session
         // is shared app-wide - serialize on it (also guards the startup preload racing us).
         IDisposableReadOnlyCollection<DisposableNamedOnnxValue> results;
+        var inferClock = System.Diagnostics.Stopwatch.StartNew();
         lock (_session)
         {
             results = _session.Run(new[]
@@ -464,6 +472,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
                 NamedOnnxValue.CreateFromTensor("video_frames", _faceInput),
             });
         }
+        BenchMetrics.Record("wav2lip_infer", inferClock.Elapsed.TotalMilliseconds);
         using var _ = results;
         var pred = results.First().AsTensor<float>();     // [1,3,96,96], BGR planes, 0..1.
 

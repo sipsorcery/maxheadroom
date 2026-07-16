@@ -72,7 +72,9 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
         {
             logger.LogInformation("[{Engine}] Synthesising: \"{Text}\"", EngineName, text);
 
+            var synthClock = Stopwatch.StartNew();
             var (pcm, sampleRate) = await SynthesiseAsync(text).ConfigureAwait(false);
+            BenchMetrics.Record("tts_synth", synthClock.Elapsed.TotalMilliseconds, $"chars={text.Length}");
             if (pcm == null || pcm.Length == 0)
             {
                 logger.LogError("[{Engine}] produced no audio for \"{Text}\".", EngineName, text);
