@@ -12,4 +12,9 @@
     <RootNamespace>demo.bench</RootNamespace>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The bench viewer leg dogfoods the same WebRTC stack Max serves with. -->
+    <PackageReference Include="SIPSorcery" Version="10.0.12" />
+  </ItemGroup>
+
 </Project>

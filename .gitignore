@@ -427,3 +427,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+bench-results.json
+bench-stderr.log
+bench/cache/

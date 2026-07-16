@@ -29,6 +29,8 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using SIPSorcery.Net;
+using SIPSorceryMedia.Abstractions;
 
 var mode = args.Length > 0 ? args[0] : "all";
 string target = GetOpt("--target") ?? Environment.GetEnvironmentVariable("BENCH_TARGET") ?? "http://localhost:8080";
@@ -53,16 +55,22 @@ string[] prompts =
 ];
 
 int exitCode = 0;
-try
+if (mode is "ask" or "all") { await RunMode("ask", RunAsk); }
+if (mode is "stt" or "all") { await RunMode("stt", RunStt); }
+if (mode is "report" or "all") { await RunMode("report", RunReport); }
+
+async Task RunMode(string name, Func<Task> run)
 {
-    if (mode is "ask" or "all") { await RunAsk(); }
-    if (mode is "stt" or "all") { await RunStt(); }
-    if (mode is "report" or "all") { await RunReport(); }
-}
-catch (Exception excp)
-{
-    summary.AppendLine($"**BENCH FAILED**: {excp.Message}");
-    exitCode = 1;
+    try
+    {
+        await run();
+    }
+    catch (Exception excp)
+    {
+        summary.AppendLine($"**{name} FAILED**: {excp.Message}");
+        summary.AppendLine();
+        exitCode = 1;
+    }
 }
 
 Console.WriteLine(summary.ToString());
@@ -76,11 +84,20 @@ return exitCode;
 
 async Task RunAsk()
 {
+    // The avatar's speaker pipeline only exists while a WebRTC session is up, so
+    // /ask 400s without one. Connect a receive-only viewer (the same SIPSorcery
+    // stack Max serves with) and keep it open for the whole measurement pass. It
+    // also gives us the truest latency of all: prompt POST -> first audible RTP.
+    await using var viewer = await BenchViewer.ConnectAsync(target);
+
     await http.PostAsync($"{target}/bench/reset", null);
 
     var clientMs = new List<double>();
+    var firstAudioMs = new List<double>();
     foreach (var prompt in Enumerable.Range(0, askIterations).Select(i => prompts[i % prompts.Length]))
     {
+        viewer.ArmAudioLatch();
+        long t0 = Environment.TickCount64;
         var sw = Stopwatch.StartNew();
         var resp = await http.PostAsync($"{target}/ask", new StringContent(prompt));
         resp.EnsureSuccessStatusCode();
@@ -88,7 +105,11 @@ async Task RunAsk()
         // /ask returns once the reply text is assembled (speech continues in the
         // background), so this is client-observed full-reply latency.
         clientMs.Add(sw.Elapsed.TotalMilliseconds);
-        Console.Error.WriteLine($"ask ({sw.ElapsedMilliseconds} ms): {prompt} -> {Truncate(reply, 80)}");
+
+        long? audioAt = await viewer.WaitForAudibleAudioAsync(TimeSpan.FromSeconds(30));
+        if (audioAt != null) { firstAudioMs.Add(audioAt.Value - t0); }
+        Console.Error.WriteLine($"ask ({sw.ElapsedMilliseconds} ms, first audio {(audioAt != null ? $"{audioAt.Value - t0} ms" : "none")}): {Truncate(prompt, 40)} -> {Truncate(reply, 60)}");
+
         // Let queued speech drain so TTS/lip-sync timings attach to the right utterance
         // and consecutive prompts don't contend for the speak lock.
         await Task.Delay(TimeSpan.FromSeconds(8));
@@ -97,9 +118,13 @@ async Task RunAsk()
     var serverAgg = await FetchAggregates();
     summary.AppendLine("## LLM reply latency");
     summary.AppendLine();
-    summary.AppendLine($"{askIterations} prompts, client-observed `/ask` round trip (full reply):");
+    summary.AppendLine($"{askIterations} prompts against a live WebRTC viewer:");
     summary.AppendLine();
-    summary.AppendLine(StatsRow("client_ask_roundtrip", clientMs));
+    if (firstAudioMs.Count > 0)
+    {
+        summary.AppendLine(StatsRow("prompt_to_first_audio (end-to-end)", firstAudioMs));
+    }
+    summary.AppendLine(StatsRow("client_ask_roundtrip (full reply text)", clientMs));
     foreach (var stage in new[] { "llm_first_sentence", "llm_stream_complete", "tts_synth" })
     {
         if (serverAgg?[stage] is JsonObject o) { summary.AppendLine(AggRow(stage, o)); }
@@ -110,6 +135,7 @@ async Task RunAsk()
     {
         ["iterations"] = askIterations,
         ["client_ms"] = new JsonArray(clientMs.Select(v => JsonValue.Create(Math.Round(v, 1))).ToArray()),
+        ["first_audio_ms"] = new JsonArray(firstAudioMs.Select(v => JsonValue.Create(Math.Round(v, 1))).ToArray()),
         ["server_aggregates"] = serverAgg?.DeepClone(),
     };
 }
@@ -280,4 +306,125 @@ static string FindFile(string relative)
         dir = dir.Parent;
     }
     return null;
+}
+
+/// <summary>
+/// Receive-only WebRTC viewer. Holding a session open makes the server build its speaker
+/// pipeline (a prerequisite for /ask and /say), and watching inbound audio RTP for the
+/// first audible packet gives an end-to-end prompt-to-first-audio latency. Offers G.711
+/// so audio can be energy-checked without an Opus decoder.
+/// </summary>
+sealed class BenchViewer : IAsyncDisposable
+{
+    private readonly RTCPeerConnection _pc;
+    private volatile TaskCompletionSource<long> _audioLatch = new();
+
+    private BenchViewer(RTCPeerConnection pc) => _pc = pc;
+
+    public static async Task<BenchViewer> ConnectAsync(string target)
+    {
+        var pc = new RTCPeerConnection(new RTCConfiguration
+        {
+            iceServers = [new RTCIceServer { urls = "stun:stun.cloudflare.com" }],
+        });
+
+        var audio = new MediaStreamTrack(
+            new List<AudioFormat> { new(SDPWellKnownMediaFormatsEnum.PCMU), new(SDPWellKnownMediaFormatsEnum.PCMA) },
+            MediaStreamStatusEnum.RecvOnly);
+        var video = new MediaStreamTrack(
+            new List<VideoFormat> { new(VideoCodecsEnum.VP8, 96), new(VideoCodecsEnum.H264, 100) },
+            MediaStreamStatusEnum.RecvOnly);
+        pc.addTrack(audio);
+        pc.addTrack(video);
+
+        var viewer = new BenchViewer(pc);
+        pc.OnRtpPacketReceived += viewer.OnRtp;
+
+        var connected = new TaskCompletionSource();
+        pc.onconnectionstatechange += state =>
+        {
+            if (state == RTCPeerConnectionState.connected) { connected.TrySetResult(); }
+            else if (state is RTCPeerConnectionState.failed or RTCPeerConnectionState.closed)
+            {
+                connected.TrySetException(new InvalidOperationException($"WebRTC connection {state}"));
+            }
+        };
+
+        var offer = pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var resp = await http.PostAsync($"{target}/offer", new StringContent(pc.localDescription.sdp.ToString()));
+        resp.EnsureSuccessStatusCode();
+        var answerSdp = await resp.Content.ReadAsStringAsync();
+        var setResult = pc.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.answer, sdp = answerSdp });
+        if (setResult != SetDescriptionResultEnum.OK)
+        {
+            throw new InvalidOperationException($"setRemoteDescription failed: {setResult}");
+        }
+
+        await connected.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        Console.Error.WriteLine("bench viewer: WebRTC connected");
+        return viewer;
+    }
+
+    /// <summary>Re-arms the audible-audio latch; the next audible RTP packet completes it.</summary>
+    public void ArmAudioLatch() => _audioLatch = new TaskCompletionSource<long>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>Returns Environment.TickCount64 at the first audible audio packet, or null on timeout.</summary>
+    public async Task<long?> WaitForAudibleAudioAsync(TimeSpan timeout)
+    {
+        try { return await _audioLatch.Task.WaitAsync(timeout); }
+        catch (TimeoutException) { return null; }
+    }
+
+    private void OnRtp(System.Net.IPEndPoint remote, SDPMediaTypesEnum media, RTPPacket packet)
+    {
+        if (media != SDPMediaTypesEnum.audio || _audioLatch.Task.IsCompleted)
+        {
+            return;
+        }
+
+        // G.711 silence sits near the zero codes; treat a frame as audible when its mean
+        // decoded amplitude clears a floor comfortably above comfort noise.
+        var payload = packet.Payload;
+        if (payload == null || payload.Length == 0) { return; }
+        bool alaw = packet.Header.PayloadType == 8;
+        long sum = 0;
+        foreach (var b in payload)
+        {
+            sum += Math.Abs((int)(alaw ? ALawDecode(b) : MuLawDecode(b)));
+        }
+        if (sum / payload.Length > 200)
+        {
+            _audioLatch.TrySetResult(Environment.TickCount64);
+        }
+    }
+
+    private static short MuLawDecode(byte b)
+    {
+        b = (byte)~b;
+        int sign = b & 0x80;
+        int exponent = (b >> 4) & 0x07;
+        int mantissa = b & 0x0F;
+        int sample = ((mantissa << 3) + 0x84) << exponent;
+        sample -= 0x84;
+        return (short)(sign != 0 ? -sample : sample);
+    }
+
+    private static short ALawDecode(byte b)
+    {
+        b ^= 0x55;
+        int sign = b & 0x80;
+        int exponent = (b >> 4) & 0x07;
+        int mantissa = b & 0x0F;
+        int sample = exponent == 0 ? (mantissa << 4) + 8 : ((mantissa << 4) + 0x108) << (exponent - 1);
+        return (short)(sign != 0 ? -sample : sample);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { _pc.close(); } catch { /* best effort */ }
+        await Task.CompletedTask;
+    }
 }
