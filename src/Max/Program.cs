@@ -239,6 +239,7 @@ class Program
             branch = Environment.GetEnvironmentVariable("GIT_BRANCH") ?? "unknown",
             sha = Environment.GetEnvironmentVariable("GIT_SHA") ?? "unknown",
             description = Environment.GetEnvironmentVariable("BUILD_DESCRIPTION") ?? "",
+            llmModel = DescribeLlmModel(),
         }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
@@ -820,6 +821,19 @@ class Program
             Environment.GetEnvironmentVariable("LLM_ENDPOINT"),
             Environment.GetEnvironmentVariable("LLM_MODEL"),
             Environment.GetEnvironmentVariable("LLM_API_KEY"));
+    }
+
+    /// <summary>The LLM actually in play, for /version and the bench: the in-process GGUF
+    /// filename, the configured endpoint model, or "not configured" (prompt-echo fallback).</summary>
+    private static string DescribeLlmModel()
+    {
+        var gguf = Environment.GetEnvironmentVariable("LLM_GGUF");
+        if (!string.IsNullOrWhiteSpace(gguf) && File.Exists(gguf))
+        {
+            return $"local:{Path.GetFileName(gguf)}";
+        }
+        var model = Environment.GetEnvironmentVariable("LLM_MODEL");
+        return string.IsNullOrWhiteSpace(model) ? "not configured" : model;
     }
 
     /// <summary>True if any TTS engine is configured (ElevenLabs or sherpa-onnx).</summary>

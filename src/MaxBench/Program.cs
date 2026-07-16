@@ -48,8 +48,25 @@ if (mode == "history")
 var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
 var results = new JsonObject { ["target"] = target, ["utc"] = DateTime.UtcNow.ToString("o"), ["mode"] = mode };
 if (GetOpt("--label") is string label) { results["label"] = label; }
+
+// The LLM in play is config, not code - a model swap doesn't change the git sha, so
+// without this the history table can't tell two different models apart under the
+// same label. Best-effort: an old/unbadged instance just won't have the field.
+string llmModel = null;
+try
+{
+    var versionResp = await http.GetAsync($"{target}/version");
+    if (versionResp.IsSuccessStatusCode)
+    {
+        llmModel = JsonNode.Parse(await versionResp.Content.ReadAsStringAsync())?["llmModel"]?.GetValue<string>();
+        if (llmModel != null) { results["llm_model"] = llmModel; }
+    }
+}
+catch { /* best effort */ }
+
 var summary = new StringBuilder();
 summary.AppendLine($"# Max bench — {target}");
+if (llmModel != null) { summary.AppendLine($"LLM: `{llmModel}`"); }
 summary.AppendLine();
 
 // Fixed prompt set: stable across runs so latency numbers are comparable.

@@ -23,7 +23,7 @@ namespace demo.bench;
 static class History
 {
     private sealed record Run(
-        DateTimeOffset Utc, string Label,
+        DateTimeOffset Utc, string Label, string LlmModel,
         double? FirstAudioP50, double? LlmFirstP50, double? LlmCompleteP50,
         double? TtsSynthP50, double? LipsyncFirstP50, double? Wav2LipP50, double? Wer);
 
@@ -67,6 +67,7 @@ static class History
             return new Run(
                 DateTimeOffset.Parse(j["utc"]!.GetValue<string>(), CultureInfo.InvariantCulture),
                 j["label"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(path),
+                j["llm_model"]?.GetValue<string>() ?? "—",
                 P50FromList(j["ask"]?["first_audio_ms"]),
                 Num(agg?["llm_first_sentence"]?["p50"]),
                 Num(agg?["llm_stream_complete"]?["p50"]),
@@ -104,12 +105,12 @@ static class History
         sb.AppendLine();
         sb.AppendLine("![wer](charts/wer.svg)");
         sb.AppendLine();
-        sb.AppendLine("| run (UTC) | label | first audio (e2e) | llm first | llm done | tts synth | lipsync first | wav2lip | WER |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| run (UTC) | label | LLM model | first audio (e2e) | llm first | llm done | tts synth | lipsync first | wav2lip | WER |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
         foreach (var r in Enumerable.Reverse(runs))
         {
             sb.AppendLine(
-                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmFirstP50)} | " +
+                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {r.LlmModel} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmFirstP50)} | " +
                 $"{Fmt(r.LlmCompleteP50)} | {Fmt(r.TtsSynthP50)} | {Fmt(r.LipsyncFirstP50)} | {Fmt(r.Wav2LipP50)} | " +
                 $"{(r.Wer is double w ? w.ToString("P1", CultureInfo.InvariantCulture) : "—")} |");
         }
@@ -118,6 +119,7 @@ static class History
         sb.AppendLine();
         sb.AppendLine("All latency figures are the p50 (median) across the prompts/windows in one bench run, in milliseconds unless noted. See [bench/README.md](https://github.com/sipsorcery/maxheadroom/blob/master/bench/README.md) for how each is measured.");
         sb.AppendLine();
+        sb.AppendLine("- **LLM model** — which model generated the replies for that run (`GET /version`'s `llmModel`: the in-process GGUF filename, or the configured endpoint model name). Model swaps are a config change, not a code change, so this is the only thing that tells two runs with the same commit label apart. Runs from before this field existed show `—`.");
         sb.AppendLine("- **first audio (e2e)** — *end-to-end LLM reply latency.* Wall-clock time from the bench posting a prompt to `/ask` until the first audible (non-silent) audio packet arrives over the WebRTC connection. The single number that best represents \"how long the viewer waits before Max starts talking.\"");
         sb.AppendLine("- **llm first** — server-side time from prompt received to the first sentence of the LLM's reply becoming available for speech (`llm_first_sentence`). A lower bound on *first audio*: it excludes TTS synthesis and network/RTP time.");
         sb.AppendLine("- **llm done** — server-side time from prompt received to the full LLM reply being assembled (`llm_stream_complete`). Reply length dependent, since longer answers keep streaming longer.");
