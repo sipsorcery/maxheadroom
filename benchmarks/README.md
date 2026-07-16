@@ -54,7 +54,7 @@ accuracy corpus.
 The `webrtc` runner uses headless Chromium as a real WebRTC peer. It sends a fixed
 speech recording on a synthetic microphone track, receives Max's audio and video,
 and measures response-audio onset plus the first sustained inter-frame change in
-the mouth region.
+the mouth region after subtracting motion in a nearby non-mouth face region.
 The signed `received_mouth_minus_audio_ms` value is positive when the mouth arrives
 after the audio and negative when it leads.
 

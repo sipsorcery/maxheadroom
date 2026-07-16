@@ -346,6 +346,7 @@ class Program
             }
 
             await streaming.SpeakStreamAsync(Tee(), timeline);
+            timeline?.RecordOnce(BenchmarkEventNames.AudioComplete);
             var streamedText = streamed.ToString().Trim();
             _logger.LogInformation("LLM reply: {Reply}", streamedText);
             return streamedText;
@@ -380,6 +381,7 @@ class Program
         if (timeline != null)
         {
             await speakTask.ConfigureAwait(false);
+            timeline.RecordOnce(BenchmarkEventNames.AudioComplete);
         }
 
         var text = reply.ToString().Trim();

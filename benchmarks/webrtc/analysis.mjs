@@ -27,9 +27,17 @@ export function meanAbsolutePixelDifference(before, after) {
   return sum / channels;
 }
 
+export function relativeRegionMotion(mouthBefore, mouthAfter, controlBefore, controlAfter) {
+  return Math.max(
+    0,
+    meanAbsolutePixelDifference(mouthBefore, mouthAfter) -
+      meanAbsolutePixelDifference(controlBefore, controlAfter),
+  );
+}
+
 export function buildCase(observation, options = {}) {
   const audioThreshold = options.audioThreshold ?? 0.018;
-  const mouthThreshold = options.mouthThreshold ?? 4;
+  const mouthThreshold = options.mouthThreshold ?? 3;
   const speechEnd = observation.speechEndMs;
   const audioOnset = firstSustainedCrossing(observation.audioSamples, audioThreshold, 3, speechEnd);
   const mouthOnset = firstSustainedCrossing(observation.mouthSamples, mouthThreshold, 2, speechEnd);
@@ -63,7 +71,7 @@ export function buildCase(observation, options = {}) {
     metrics.dropped_ticks = renderer.droppedTicks;
   }
 
-  const required = ["stt_final", "llm_first_token", "audio_started", "first_mouth_frame"];
+  const required = ["stt_final", "llm_first_token", "audio_started", "audio_complete", "first_mouth_frame"];
   const missing = required.filter(name => !events.some(x => x.name === name));
   if (audioOnset == null) missing.push("received_audio_onset");
   if (mouthOnset == null) missing.push("received_mouth_onset");

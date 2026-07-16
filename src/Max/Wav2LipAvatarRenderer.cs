@@ -307,11 +307,14 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
 
     public Task PauseVideo() { _isPaused = true; return Task.CompletedTask; }
     public Task ResumeVideo() { _isPaused = false; return Task.CompletedTask; }
-    public Task CloseVideo()
+    public async Task CloseVideo()
     {
         _isClosed = true;
-        _renderTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-        return Task.CompletedTask;
+        var timer = Interlocked.Exchange(ref _renderTimer, null);
+        if (timer != null)
+        {
+            await timer.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     // --- Render loop --------------------------------------------------------------------
@@ -1090,7 +1093,11 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
     public void Dispose()
     {
         _isClosed = true;
-        _renderTimer?.Dispose();
+        // DisposeAsync waits for an in-flight render callback before the native encoder and
+        // Skia resources are released. Disposing them underneath FFmpeg caused exit code 139
+        // when short-lived benchmark peers disconnected in succession.
+        var timer = Interlocked.Exchange(ref _renderTimer, null);
+        timer?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         // _session is shared for the app's lifetime (renderers are per-connection).
         _persona?.Dispose();
         _bgCache?.Dispose();
