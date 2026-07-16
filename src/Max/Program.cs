@@ -565,7 +565,13 @@ class Program
                         await videoSource.StartVideo();
                         if (speaker != null)
                         {
-                            _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            // A benchmark peer needs a controlled silence-to-speech transition.
+                            // Its deterministic microphone input supplies the first utterance;
+                            // the normal greeting would otherwise be measured as the reply.
+                            if (benchmarkSession == null)
+                            {
+                                _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            }
                         }
                         else
                         {

@@ -68,9 +68,12 @@ do not alter RTP timestamps or media payloads.
 ```bash
 cd benchmarks/webrtc
 npm install
-npx playwright install chromium
 node run.mjs --url https://max.sipsorcery.com --audio ./prompt.wav
 ```
+
+The runner defaults to the installed Google Chrome channel because Max currently
+negotiates H264 video and Playwright's bundled Chromium does not include H264 on
+every platform. Override it with `--browser-channel` when testing another codec.
 
 The input must end with 600 ms of silence (override with
 `--trailing-silence-ms`). That fixed transition lets the client mark speech end

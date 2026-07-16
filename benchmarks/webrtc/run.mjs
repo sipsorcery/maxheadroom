@@ -16,13 +16,20 @@ const outputPath = option("out", "artifacts/webrtc-lipsync/result.json");
 const recordingPath = option("recording", "artifacts/webrtc-lipsync/diagnostic.webm");
 const timeoutMs = Number(option("timeout-ms", "45000"));
 const trailingSilenceMs = Number(option("trailing-silence-ms", "600"));
+const browserChannel = option("browser-channel", "chrome");
 
 if (!audioPath) {
   throw new Error("Pass --audio <wav-or-flac> containing deterministic speech followed by silence.");
 }
 
 const audioBase64 = (await readFile(audioPath)).toString("base64");
-const browser = await chromium.launch({ headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+// Max currently sends H264 only. Playwright's bundled open-source Chromium build does not
+// include H264 on every platform, while the installed Chrome channel does.
+const browser = await chromium.launch({
+  channel: browserChannel,
+  headless: true,
+  args: ["--autoplay-policy=no-user-gesture-required"],
+});
 let observation;
 
 try {
@@ -198,6 +205,7 @@ const result = {
   configuration: {
     suite: "webrtc-lipsync-v1",
     target: baseUrl,
+    browserChannel,
     inputAudio: path.basename(audioPath),
     trailingSilenceMilliseconds: String(trailingSilenceMs),
     audioOnsetThresholdRms: "0.018",
