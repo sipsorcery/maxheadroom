@@ -54,7 +54,7 @@ accuracy corpus.
 The `webrtc` runner uses headless Chromium as a real WebRTC peer. It sends a fixed
 speech recording on a synthetic microphone track, receives Max's audio and video,
 and measures response-audio onset plus the first sustained inter-frame change in
-the mouth region.
+the mouth region after subtracting motion in a nearby non-mouth face region.
 The signed `received_mouth_minus_audio_ms` value is positive when the mouth arrives
 after the audio and negative when it leads.
 
@@ -68,9 +68,12 @@ do not alter RTP timestamps or media payloads.
 ```bash
 cd benchmarks/webrtc
 npm install
-npx playwright install chromium
 node run.mjs --url https://max.sipsorcery.com --audio ./prompt.wav
 ```
+
+The runner defaults to the installed Google Chrome channel because Max currently
+negotiates H264 video and Playwright's bundled Chromium does not include H264 on
+every platform. Override it with `--browser-channel` when testing another codec.
 
 The input must end with 600 ms of silence (override with
 `--trailing-silence-ms`). That fixed transition lets the client mark speech end

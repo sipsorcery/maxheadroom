@@ -22,6 +22,7 @@ public static class BenchmarkEventNames
     public const string LlmComplete = "llm_complete";
     public const string TtsAudioReady = "tts_audio_ready";
     public const string AudioStarted = "audio_started";
+    public const string AudioComplete = "audio_complete";
     public const string FirstMouthFrame = "first_mouth_frame";
 
     public static IReadOnlyList<string> All { get; } = Array.AsReadOnly(new[]
@@ -35,6 +36,7 @@ public static class BenchmarkEventNames
         LlmComplete,
         TtsAudioReady,
         AudioStarted,
+        AudioComplete,
         FirstMouthFrame,
     });
 }

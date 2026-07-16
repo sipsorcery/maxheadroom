@@ -346,6 +346,7 @@ class Program
             }
 
             await streaming.SpeakStreamAsync(Tee(), timeline);
+            timeline?.RecordOnce(BenchmarkEventNames.AudioComplete);
             var streamedText = streamed.ToString().Trim();
             _logger.LogInformation("LLM reply: {Reply}", streamedText);
             return streamedText;
@@ -380,6 +381,7 @@ class Program
         if (timeline != null)
         {
             await speakTask.ConfigureAwait(false);
+            timeline.RecordOnce(BenchmarkEventNames.AudioComplete);
         }
 
         var text = reply.ToString().Trim();
@@ -565,7 +567,13 @@ class Program
                         await videoSource.StartVideo();
                         if (speaker != null)
                         {
-                            _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            // A benchmark peer needs a controlled silence-to-speech transition.
+                            // Its deterministic microphone input supplies the first utterance;
+                            // the normal greeting would otherwise be measured as the reply.
+                            if (benchmarkSession == null)
+                            {
+                                _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            }
                         }
                         else
                         {

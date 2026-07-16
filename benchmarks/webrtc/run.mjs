@@ -16,13 +16,20 @@ const outputPath = option("out", "artifacts/webrtc-lipsync/result.json");
 const recordingPath = option("recording", "artifacts/webrtc-lipsync/diagnostic.webm");
 const timeoutMs = Number(option("timeout-ms", "45000"));
 const trailingSilenceMs = Number(option("trailing-silence-ms", "600"));
+const browserChannel = option("browser-channel", "chrome");
 
 if (!audioPath) {
   throw new Error("Pass --audio <wav-or-flac> containing deterministic speech followed by silence.");
 }
 
 const audioBase64 = (await readFile(audioPath)).toString("base64");
-const browser = await chromium.launch({ headless: true, args: ["--autoplay-policy=no-user-gesture-required"] });
+// Max currently sends H264 only. Playwright's bundled open-source Chromium build does not
+// include H264 on every platform, while the installed Chrome channel does.
+const browser = await chromium.launch({
+  channel: browserChannel,
+  headless: true,
+  args: ["--autoplay-policy=no-user-gesture-required"],
+});
 let observation;
 
 try {
@@ -97,8 +104,10 @@ try {
     canvas.height = 120;
     const graphics = canvas.getContext("2d", { willReadFrequently: true });
     const roi = { x: 68, y: 76, width: 40, height: 28 };
+    const controlRoi = { x: 68, y: 48, width: 40, height: 20 };
     graphics.drawImage(video, 0, 0, canvas.width, canvas.height);
     let previousMouth = graphics.getImageData(roi.x, roi.y, roi.width, roi.height).data.slice();
+    let previousControl = graphics.getImageData(controlRoi.x, controlRoi.y, controlRoi.width, controlRoi.height).data.slice();
 
     const mimeType = ["video/webm;codecs=vp8,opus", "video/webm"].find(MediaRecorder.isTypeSupported) ?? "";
     const chunks = [];
@@ -126,14 +135,19 @@ try {
       const timeMs = performance.now() - started;
       graphics.drawImage(video, 0, 0, canvas.width, canvas.height);
       const frame = graphics.getImageData(roi.x, roi.y, roi.width, roi.height).data;
-      let total = 0;
-      let channels = 0;
-      for (let i = 0; i < frame.length; i += 4) {
-        total += Math.abs(frame[i] - previousMouth[i]) + Math.abs(frame[i + 1] - previousMouth[i + 1]) + Math.abs(frame[i + 2] - previousMouth[i + 2]);
-        channels += 3;
-      }
-      mouthSamples.push({ timeMs, value: total / channels });
+      const control = graphics.getImageData(controlRoi.x, controlRoi.y, controlRoi.width, controlRoi.height).data;
+      const delta = (before, after) => {
+        let total = 0;
+        let channels = 0;
+        for (let i = 0; i < after.length; i += 4) {
+          total += Math.abs(after[i] - before[i]) + Math.abs(after[i + 1] - before[i + 1]) + Math.abs(after[i + 2] - before[i + 2]);
+          channels += 3;
+        }
+        return total / channels;
+      };
+      mouthSamples.push({ timeMs, value: Math.max(0, delta(previousMouth, frame) - delta(previousControl, control)) });
       previousMouth = frame.slice();
+      previousControl = control.slice();
       video.requestVideoFrameCallback(captureMouthFrame);
     };
     video.requestVideoFrameCallback(captureMouthFrame);
@@ -149,13 +163,21 @@ try {
     await ended;
 
     let server;
+    const hasSustainedCrossing = (samples, threshold, count) => {
+      let run = 0;
+      for (const sample of samples) {
+        run = sample.timeMs >= speechEndMs && sample.value >= threshold ? run + 1 : 0;
+        if (run >= count) return true;
+      }
+      return false;
+    };
     while (performance.now() < deadline) {
       server = await fetch(`${baseUrl}/benchmark/webrtc/${sessionId}`).then(response => response.json());
       const names = new Set(server.events.map(event => event.name));
-      const serverComplete = ["stt_final", "llm_first_token", "audio_started", "first_mouth_frame"].every(name => names.has(name));
-      const recentAudio = audioSamples.slice(-3).every(sample => sample.timeMs >= speechEndMs && sample.value >= 0.018);
-      const recentMouth = mouthSamples.slice(-2).every(sample => sample.timeMs >= speechEndMs && sample.value >= 4);
-      if (serverComplete && recentAudio && recentMouth) break;
+      const serverComplete = ["stt_final", "llm_first_token", "audio_started", "audio_complete", "first_mouth_frame"].every(name => names.has(name));
+      const observedAudio = hasSustainedCrossing(audioSamples, 0.018, 3);
+      const observedMouth = hasSustainedCrossing(mouthSamples, 3, 2);
+      if (serverComplete && observedAudio && observedMouth) break;
       await sleep(100);
     }
 
@@ -198,10 +220,11 @@ const result = {
   configuration: {
     suite: "webrtc-lipsync-v1",
     target: baseUrl,
+    browserChannel,
     inputAudio: path.basename(audioPath),
     trailingSilenceMilliseconds: String(trailingSilenceMs),
     audioOnsetThresholdRms: "0.018",
-    mouthOnsetThresholdMeanInterFrameRgbDelta: "4",
+    mouthOnsetThresholdRelativeInterFrameRgbDelta: "3",
   },
   cases: [benchmarkCase],
   summaries,
