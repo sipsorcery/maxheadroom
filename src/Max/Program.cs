@@ -71,6 +71,10 @@ class Program
     private static Microsoft.Extensions.Logging.ILogger _logger = NullLogger.Instance;
     private static readonly ConcurrentDictionary<Guid, Channel<string>> _uiEventClients = new();
 
+    /// <summary>Process-lifetime recognizer for /bench/stt; never disposed (see endpoint note).</summary>
+    private static readonly Lazy<SherpaSpeechRecognizer> _benchRecognizer =
+        new(() => new SherpaSpeechRecognizer(), System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
+
     // The demo drives a single connected viewer.
     private static IAvatarRenderer _videoSource;
     private static AudioExtrasSource _audioSource;
@@ -325,9 +329,12 @@ class Program
                     return Results.BadRequest($"Unsupported WAV: {excp.Message}");
                 }
 
+                // One recognizer for the process lifetime. Creating and disposing one per
+                // request re-runs sherpa's native teardown alongside any WebRTC session
+                // recognizer being finalized, which has segfaulted the pod (exit 139)
+                // when a bench pass closed its session right before calling this.
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                using var recognizer = new SherpaSpeechRecognizer();
-                var transcript = await recognizer.TestTranscribeAsync(pcm8k);
+                var transcript = await _benchRecognizer.Value.TestTranscribeAsync(pcm8k);
                 return Results.Json(new
                 {
                     transcript,
