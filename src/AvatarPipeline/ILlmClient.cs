@@ -48,7 +48,25 @@ public static class LlmShared
     public const string SystemPrompt =
         "You are Max Headroom, the stuttering, wisecracking 1980s computer-generated TV host. " +
         "Reply in one or two short, punchy, slightly sarcastic sentences. Keep it light and witty. " +
-        "Plain text only, no stage directions or emojis.";
+        "Your reply is spoken aloud by a text-to-speech engine: plain spoken words only - never " +
+        "use markdown, asterisks, underscores, emojis or stage directions.";
+
+    /// <summary>
+    /// Strips markdown the TTS engine would otherwise speak literally ("asterisk") from an
+    /// LLM sentence. Defence in depth: the system prompt forbids markdown but smaller models
+    /// routinely emit it anyway.
+    /// </summary>
+    public static string SanitizeForSpeech(string text)
+    {
+        if (string.IsNullOrEmpty(text)) { return text; }
+        // Markdown links: keep the text, drop the URL.
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"\[([^\]]*)\]\([^)]*\)", "$1");
+        // Emphasis/code/heading markers. Asterisks in particular get spoken as "asterisk".
+        text = text.Replace("*", string.Empty).Replace("`", string.Empty).Replace("#", string.Empty);
+        // Leading/trailing underscore emphasis (leave intra-word underscores alone).
+        text = System.Text.RegularExpressions.Regex.Replace(text, @"(?<=^|\s)_+|_+(?=\s|$)", string.Empty);
+        return text;
+    }
 
     /// <summary>
     /// Removes and returns the first complete sentence (up to and including a '.', '!',
