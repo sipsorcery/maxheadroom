@@ -71,6 +71,7 @@ class Program
 {
     private static Microsoft.Extensions.Logging.ILogger _logger = NullLogger.Instance;
     private static readonly ConcurrentDictionary<Guid, Channel<string>> _uiEventClients = new();
+    private static readonly ConcurrentDictionary<string, WebRtcBenchmarkSession> _webRtcBenchmarkSessions = new(StringComparer.Ordinal);
 
     // The demo drives a single connected viewer.
     private static IAvatarRenderer _videoSource;
@@ -272,6 +273,37 @@ class Program
                     (benchmarkCase, timeline, _) => AskAsync(benchmarkCase.Prompt, timeline));
                 return Results.Text(BenchmarkJson.Serialize(result), "application/json");
             });
+
+            app.MapPost("/benchmark/webrtc/session", () =>
+            {
+                var id = Guid.NewGuid().ToString("N");
+                _webRtcBenchmarkSessions[id] = new WebRtcBenchmarkSession(id);
+                return Results.Json(new { sessionId = id });
+            });
+
+            app.MapPost("/benchmark/webrtc/{id}/start", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryGetValue(id, out var session)) return Results.NotFound();
+                session.Arm();
+                return Results.Ok();
+            });
+
+            app.MapPost("/benchmark/webrtc/{id}/speech-end", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryGetValue(id, out var session)) return Results.NotFound();
+                session.Record(BenchmarkEventNames.SpeechEnd);
+                return Results.Ok();
+            });
+
+            app.MapGet("/benchmark/webrtc/{id}", (string id) =>
+                _webRtcBenchmarkSessions.TryGetValue(id, out var session)
+                    ? Results.Json(session.Snapshot())
+                    : Results.NotFound());
+
+            app.MapDelete("/benchmark/webrtc/{id}", (string id) =>
+                _webRtcBenchmarkSessions.TryRemove(id, out _)
+                    ? Results.NoContent()
+                    : Results.NotFound());
         }
 
         await app.RunAsync();
@@ -336,7 +368,7 @@ class Program
         });
 
         var reply = new StringBuilder();
-        await foreach (var sentence in _llm.StreamReplyAsync(prompt))
+        await foreach (var sentence in _llm.StreamReplyAsync(prompt, timeline))
         {
             reply.Append(sentence).Append(' ');
             await sentences.Writer.WriteAsync(sentence);
@@ -359,12 +391,13 @@ class Program
     /// Handles microphone input separately from typed /ask requests so the browser activity
     /// drawer can show the STT result followed by the reply generated for that utterance.
     /// </summary>
-    private static async Task HandleRecognizedSpeechAsync(string text)
+    private static async Task HandleRecognizedSpeechAsync(string text, BenchmarkTimeline timeline = null)
     {
+        timeline?.RecordOnce(BenchmarkEventNames.SttFinal);
         PublishUiEvent("stt", text);
         try
         {
-            var reply = await AskAsync(text);
+            var reply = await AskAsync(text, timeline);
             if (!string.IsNullOrWhiteSpace(reply))
             {
                 PublishUiEvent("llm", reply);
@@ -426,7 +459,14 @@ class Program
         var sdpOffer = await ReadBody(request);
         _logger.LogDebug("Received SDP offer:\n{offer}", sdpOffer);
 
-        var pc = CreatePeerConnection();
+        WebRtcBenchmarkSession benchmarkSession = null;
+        if (BenchmarkEndpointEnabled() &&
+            request.Headers.TryGetValue("X-Max-Benchmark-Session", out var benchmarkIds))
+        {
+            _webRtcBenchmarkSessions.TryGetValue(benchmarkIds.ToString(), out benchmarkSession);
+        }
+
+        var pc = CreatePeerConnection(benchmarkSession);
 
         var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdpOffer, type = RTCSdpType.offer });
         if (result != SetDescriptionResultEnum.OK)
@@ -442,7 +482,7 @@ class Program
         return Results.Text(pc.localDescription.sdp.ToString());
     }
 
-    private static RTCPeerConnection CreatePeerConnection()
+    private static RTCPeerConnection CreatePeerConnection(WebRtcBenchmarkSession benchmarkSession = null)
     {
         var config = new RTCConfiguration
         {
@@ -458,6 +498,7 @@ class Program
         var pc = new RTCPeerConnection(config);
 
         IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder());
+        benchmarkSession?.Attach(videoSource);
         var videoTrack = new MediaStreamTrack(videoSource.GetVideoSourceFormats(), MediaStreamStatusEnum.SendOnly);
         pc.addTrack(videoTrack);
         videoSource.OnVideoSourceEncodedSample += pc.SendVideo;
@@ -487,7 +528,7 @@ class Program
             recognizer = CreateRecognizer();
             if (recognizer != null)
             {
-                recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text);
+                recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text, benchmarkSession?.Timeline);
 
                 var micDecoder = new AudioEncoder();
                 var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);

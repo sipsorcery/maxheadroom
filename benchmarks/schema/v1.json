@@ -66,7 +66,8 @@
         },
         "metrics": {
           "type": "object",
-          "additionalProperties": { "type": "number", "minimum": 0 }
+          "description": "Unit-bearing or signed metrics; unlike durations these may be negative (for example mouth-minus-audio offset).",
+          "additionalProperties": { "type": "number" }
         },
         "events": {
           "type": "array",

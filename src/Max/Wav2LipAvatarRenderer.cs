@@ -47,7 +47,7 @@ using SkiaSharp;
 
 namespace demo;
 
-public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
+public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchmarkSource
 {
     public const int WIDTH = 640;
     public const int HEIGHT = 480;
@@ -186,14 +186,24 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private Timer _renderTimer;
     private int _renderBusy;                            // non-reentrancy guard for the timer.
     private readonly System.Diagnostics.Stopwatch _videoClock = new();    // for truthful RTP durations.
+    private readonly System.Diagnostics.Stopwatch _benchmarkClock = System.Diagnostics.Stopwatch.StartNew();
     private long _lastEmitMs = -1;
     private SKBitmap _bgCache;
     private int _bgCacheIdx = int.MinValue;
     private int _frameIdx;
     private bool _isStarted, _isPaused, _isClosed, _faulted;
 
+    // Benchmark counters. Stopwatch timestamps and Interlocked updates observe the render loop
+    // without altering its timer, RTP durations, encoder input, or model input.
+    private long _emittedFrames, _droppedTicks;
+    private long _inferenceCount, _inferenceTicks, _maximumInferenceTicks;
+    private long _encodeCount, _encodeTicks, _maximumEncodeTicks;
+    private long _mouthLatenessCount, _mouthLatenessTicks, _maximumMouthLatenessTicks;
+    private int _firstMouthFrameReported;
+
     public event EncodedSampleDelegate OnVideoSourceEncodedSample;
     public event SourceErrorDelegate OnVideoSourceError;
+    public event Action FirstMouthFrameProduced;
 #pragma warning disable CS0067
     public event RawVideoSampleDelegate OnVideoSourceRawSample;
     public event RawVideoSampleFasterDelegate OnVideoSourceRawSampleFaster;
@@ -251,6 +261,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             _lastMouth = null;
             _speechClock.Restart();
             _speaking = true;
+            Volatile.Write(ref _firstMouthFrameReported, 0);
         }
     }
 
@@ -319,6 +330,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         // if the previous one is still going - a late frame beats a dead process.
         if (Interlocked.CompareExchange(ref _renderBusy, 1, 0) != 0)
         {
+            Interlocked.Increment(ref _droppedTicks);
             return;
         }
 
@@ -328,8 +340,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             var bgr = RenderFrame(mouth, _frameIdx);
             _frameIdx++;
 
+            long encodeStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             var encoded = _videoEncoder.EncodeVideo(WIDTH, HEIGHT, bgr, VideoPixelFormatsEnum.Bgr,
                 _formatManager.SelectedFormat.Codec);
+            RecordDuration(encodeStarted, ref _encodeCount, ref _encodeTicks, ref _maximumEncodeTicks);
             if (encoded != null)
             {
                 // Truthful RTP durations: a fixed 3600/frame lets the video RTP clock fall
@@ -341,6 +355,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
                     ? VIDEO_SAMPLING_RATE / FPS
                     : (uint)Math.Clamp((now - _lastEmitMs) * (VIDEO_SAMPLING_RATE / 1000), 900, 4 * 3600);
                 _lastEmitMs = now;
+                Interlocked.Increment(ref _emittedFrames);
                 OnVideoSourceEncodedSample?.Invoke(durationRtpTS, encoded);
             }
         }
@@ -399,11 +414,91 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             if (frame > _mouthFrame)
             {
                 _mouthFrame = frame;
+                long inferenceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 _lastMouth = Infer(mel, (int)(frame * MEL_PER_FRAME));
+                RecordDuration(inferenceStarted, ref _inferenceCount, ref _inferenceTicks, ref _maximumInferenceTicks);
+
+                double lateMs = Math.Max(0, _speechClock.Elapsed.TotalMilliseconds - frame * (1000.0 / FPS));
+                long lateTicks = MillisecondsToStopwatchTicks(lateMs);
+                Interlocked.Increment(ref _mouthLatenessCount);
+                Interlocked.Add(ref _mouthLatenessTicks, lateTicks);
+                UpdateMaximum(ref _maximumMouthLatenessTicks, lateTicks);
+
+                if (Interlocked.Exchange(ref _firstMouthFrameReported, 1) == 0)
+                {
+                    FirstMouthFrameProduced?.Invoke();
+                }
             }
         }
         return _lastMouth ?? _idleMouth;
     }
+
+    public AvatarRenderBenchmarkSnapshot GetBenchmarkSnapshot()
+    {
+        long emitted = Interlocked.Read(ref _emittedFrames);
+        long elapsedMs = _benchmarkClock.ElapsedMilliseconds;
+        long inferenceCount = Interlocked.Read(ref _inferenceCount);
+        long encodeCount = Interlocked.Read(ref _encodeCount);
+        long latenessCount = Interlocked.Read(ref _mouthLatenessCount);
+
+        return new AvatarRenderBenchmarkSnapshot(
+            emitted,
+            Interlocked.Read(ref _droppedTicks),
+            elapsedMs > 0 ? emitted * 1000.0 / elapsedMs : 0,
+            inferenceCount,
+            MeanMilliseconds(Interlocked.Read(ref _inferenceTicks), inferenceCount),
+            StopwatchTicksToMilliseconds(Interlocked.Read(ref _maximumInferenceTicks)),
+            encodeCount,
+            MeanMilliseconds(Interlocked.Read(ref _encodeTicks), encodeCount),
+            StopwatchTicksToMilliseconds(Interlocked.Read(ref _maximumEncodeTicks)),
+            MeanMilliseconds(Interlocked.Read(ref _mouthLatenessTicks), latenessCount),
+            StopwatchTicksToMilliseconds(Interlocked.Read(ref _maximumMouthLatenessTicks)));
+    }
+
+    public void ResetBenchmarkCounters()
+    {
+        Interlocked.Exchange(ref _emittedFrames, 0);
+        Interlocked.Exchange(ref _droppedTicks, 0);
+        Interlocked.Exchange(ref _inferenceCount, 0);
+        Interlocked.Exchange(ref _inferenceTicks, 0);
+        Interlocked.Exchange(ref _maximumInferenceTicks, 0);
+        Interlocked.Exchange(ref _encodeCount, 0);
+        Interlocked.Exchange(ref _encodeTicks, 0);
+        Interlocked.Exchange(ref _maximumEncodeTicks, 0);
+        Interlocked.Exchange(ref _mouthLatenessCount, 0);
+        Interlocked.Exchange(ref _mouthLatenessTicks, 0);
+        Interlocked.Exchange(ref _maximumMouthLatenessTicks, 0);
+        Interlocked.Exchange(ref _firstMouthFrameReported, 0);
+        _benchmarkClock.Restart();
+    }
+
+    private static void RecordDuration(long started, ref long count, ref long totalTicks, ref long maximumTicks)
+    {
+        long elapsed = System.Diagnostics.Stopwatch.GetTimestamp() - started;
+        Interlocked.Increment(ref count);
+        Interlocked.Add(ref totalTicks, elapsed);
+        UpdateMaximum(ref maximumTicks, elapsed);
+    }
+
+    private static void UpdateMaximum(ref long maximum, long candidate)
+    {
+        long current = Volatile.Read(ref maximum);
+        while (candidate > current)
+        {
+            long observed = Interlocked.CompareExchange(ref maximum, candidate, current);
+            if (observed == current) return;
+            current = observed;
+        }
+    }
+
+    private static double MeanMilliseconds(long ticks, long count) =>
+        count == 0 ? 0 : StopwatchTicksToMilliseconds(ticks) / count;
+
+    private static double StopwatchTicksToMilliseconds(long ticks) =>
+        ticks * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+
+    private static long MillisecondsToStopwatchTicks(double milliseconds) =>
+        (long)(milliseconds * System.Diagnostics.Stopwatch.Frequency / 1000.0);
 
     /// <summary>Recomputes the mel of the buffered PCM off the render thread.</summary>
     private void RefreshMel()

@@ -1,0 +1,36 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { buildCase, firstSustainedCrossing, meanAbsolutePixelDifference, summarize } from "./analysis.mjs";
+
+test("requires a sustained threshold crossing", () => {
+  const samples = [0, 8, 1, 8, 9].map((value, i) => ({ timeMs: i * 10, value }));
+  assert.equal(firstSustainedCrossing(samples, 7, 2), 30);
+});
+
+test("calculates RGB difference without alpha", () => {
+  assert.equal(meanAbsolutePixelDifference(new Uint8Array([0, 10, 20, 1]), new Uint8Array([3, 16, 29, 255])), 6);
+});
+
+test("reports signed received mouth to audio offset", () => {
+  const observation = {
+    sessionId: "case-1",
+    speechEndMs: 100,
+    audioSamples: [100, 110, 120].map(timeMs => ({ timeMs, value: 0.1 })),
+    mouthSamples: [100, 110].map(timeMs => ({ timeMs, value: 10 })),
+    server: { events: [
+      { name: "speech_end", elapsedMilliseconds: 20 },
+      { name: "stt_final", elapsedMilliseconds: 30 },
+      { name: "llm_first_token", elapsedMilliseconds: 40 },
+      { name: "audio_started", elapsedMilliseconds: 50 },
+      { name: "first_mouth_frame", elapsedMilliseconds: 55 },
+    ] },
+  };
+  const result = buildCase(observation);
+  assert.equal(result.succeeded, true);
+  assert.equal(result.metrics.received_mouth_minus_audio_ms, 0);
+  assert.equal(result.metricsMilliseconds.server_speech_end_to_stt_final_ms, 10);
+});
+
+test("summarizes interpolated percentiles", () => {
+  assert.deepEqual(summarize([1, 3]), { count: 2, minimum: 1, maximum: 3, mean: 2, p50: 2, p90: 2.8, p95: 2.9 });
+});
