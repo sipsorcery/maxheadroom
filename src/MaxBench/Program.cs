@@ -157,9 +157,13 @@ async Task RunAsk()
                 // Drain the utterance fully (wait for sustained silence) so the next prompt's
                 // first-audio can't latch onto this reply's tail and TTS/lip-sync timings
                 // attach to the right utterance. No audio at all -> nothing to drain.
+                // The quiet window must exceed the inter-sentence synthesis gap (tts_synth
+                // p95 ~4s): a shorter window mistakes "synthesising the next sentence" for
+                // end-of-reply and the viewer then disconnects mid-speech - which currently
+                // segfaults the server (see the teardown-race issue).
                 if (audioAt != null)
                 {
-                    await viewer.WaitForSilenceAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(90));
+                    await viewer.WaitForSilenceAsync(TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(120));
                 }
             }
             catch (Exception excp)
