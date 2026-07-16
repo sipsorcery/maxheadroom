@@ -234,6 +234,12 @@ class Program
         app.UseStaticFiles();
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
+        app.MapGet("/version", () => Results.Json(new
+        {
+            branch = Environment.GetEnvironmentVariable("GIT_BRANCH") ?? "unknown",
+            sha = Environment.GetEnvironmentVariable("GIT_SHA") ?? "unknown",
+            description = Environment.GetEnvironmentVariable("BUILD_DESCRIPTION") ?? "",
+        }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
 

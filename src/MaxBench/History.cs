@@ -113,6 +113,18 @@ static class History
                 $"{Fmt(r.LlmCompleteP50)} | {Fmt(r.TtsSynthP50)} | {Fmt(r.LipsyncFirstP50)} | {Fmt(r.Wav2LipP50)} | " +
                 $"{(r.Wer is double w ? w.ToString("P1", CultureInfo.InvariantCulture) : "—")} |");
         }
+        sb.AppendLine();
+        sb.AppendLine("## Metric definitions");
+        sb.AppendLine();
+        sb.AppendLine("All latency figures are the p50 (median) across the prompts/windows in one bench run, in milliseconds unless noted. See [bench/README.md](https://github.com/sipsorcery/maxheadroom/blob/master/bench/README.md) for how each is measured.");
+        sb.AppendLine();
+        sb.AppendLine("- **first audio (e2e)** — *end-to-end LLM reply latency.* Wall-clock time from the bench posting a prompt to `/ask` until the first audible (non-silent) audio packet arrives over the WebRTC connection. The single number that best represents \"how long the viewer waits before Max starts talking.\"");
+        sb.AppendLine("- **llm first** — server-side time from prompt received to the first sentence of the LLM's reply becoming available for speech (`llm_first_sentence`). A lower bound on *first audio*: it excludes TTS synthesis and network/RTP time.");
+        sb.AppendLine("- **llm done** — server-side time from prompt received to the full LLM reply being assembled (`llm_stream_complete`). Reply length dependent, since longer answers keep streaming longer.");
+        sb.AppendLine("- **tts synth** — time sherpa-onnx's TTS engine spends synthesising one sentence's audio (`tts_synth`). Historically the pipeline's dominant cost; noisy across runs because sentence length varies with the LLM's reply.");
+        sb.AppendLine("- **lipsync first** — time from an utterance's audio being handed to the avatar renderer until the first lip-synced (Wav2Lip) mouth frame is ready (`lipsync_first_mouth`). Governs how quickly the avatar's mouth starts moving once it begins speaking.");
+        sb.AppendLine("- **wav2lip** — time for a single Wav2Lip ONNX inference call, i.e. rendering one mouth frame from a window of mel-spectrogram audio (`wav2lip_infer`). Runs continuously while the avatar speaks (~25 times/second of audio), so this is a per-frame cost, not a one-off latency.");
+        sb.AppendLine("- **WER** — *word error rate* of speech-to-text. The bench sends a fixed reference audio clip (Harvard sentences, `bench/corpus.json`) through the same offline recogniser the live WebRTC audio path uses, then scores the transcript against the known-correct reference text. Lower is better; 0% is a perfect transcript.");
         return sb.ToString();
 
         static string Fmt(double? v) => v is double d ? d.ToString("F0", CultureInfo.InvariantCulture) : "—";
