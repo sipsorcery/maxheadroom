@@ -12,7 +12,11 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.4" />
+    <!-- Keep this aligned with Microsoft.ML.OnnxRuntime 1.24.4 in Max.csproj.
+         Sherpa 1.13.4's Linux native library requires ONNX Runtime 1.27 and
+         fails at startup when both packages are flattened into the publish
+         directory. Production 1.13.3 is compatible with the pinned runtime. -->
+    <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.3" />
     <PackageReference Include="LLamaSharp" Version="0.27.0" />
     <PackageReference Include="LLamaSharp.Backend.Cpu" Version="0.27.0" />
     <PackageReference Include="SIPSorcery" Version="10.0.12" />
