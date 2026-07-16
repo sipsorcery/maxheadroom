@@ -38,8 +38,16 @@ string jsonOut = GetOpt("--json");
 int askIterations = int.TryParse(GetOpt("--iterations"), out var it) ? it : 5;
 target = target.TrimEnd('/');
 
+// history mode is offline: regenerate the trend table + charts from stored run JSONs.
+if (mode == "history")
+{
+    demo.bench.History.Generate(GetOpt("--history-dir") ?? "bench-history");
+    return 0;
+}
+
 var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
 var results = new JsonObject { ["target"] = target, ["utc"] = DateTime.UtcNow.ToString("o"), ["mode"] = mode };
+if (GetOpt("--label") is string label) { results["label"] = label; }
 var summary = new StringBuilder();
 summary.AppendLine($"# Max bench — {target}");
 summary.AppendLine();
@@ -88,31 +96,65 @@ async Task RunAsk()
     // /ask 400s without one. Connect a receive-only viewer (the same SIPSorcery
     // stack Max serves with) and keep it open for the whole measurement pass. It
     // also gives us the truest latency of all: prompt POST -> first audible RTP.
-    await using var viewer = await BenchViewer.ConnectAsync(target);
+    var viewer = await BenchViewer.ConnectAsync(target);
 
     await http.PostAsync($"{target}/bench/reset", null);
 
     var clientMs = new List<double>();
     var firstAudioMs = new List<double>();
-    foreach (var prompt in Enumerable.Range(0, askIterations).Select(i => prompts[i % prompts.Length]))
+    int failures = 0;
+    try
     {
-        viewer.ArmAudioLatch();
-        long t0 = Environment.TickCount64;
-        var sw = Stopwatch.StartNew();
-        var resp = await http.PostAsync($"{target}/ask", new StringContent(prompt));
-        resp.EnsureSuccessStatusCode();
-        var reply = await resp.Content.ReadAsStringAsync();
-        // /ask returns once the reply text is assembled (speech continues in the
-        // background), so this is client-observed full-reply latency.
-        clientMs.Add(sw.Elapsed.TotalMilliseconds);
+        foreach (var prompt in Enumerable.Range(0, askIterations).Select(i => prompts[i % prompts.Length]))
+        {
+            try
+            {
+                viewer.ArmAudioLatch();
+                long t0 = Environment.TickCount64;
+                var sw = Stopwatch.StartNew();
+                var resp = await http.PostAsync($"{target}/ask", new StringContent(prompt));
 
-        long? audioAt = await viewer.WaitForAudibleAudioAsync(TimeSpan.FromSeconds(30));
-        if (audioAt != null) { firstAudioMs.Add(audioAt.Value - t0); }
-        Console.Error.WriteLine($"ask ({sw.ElapsedMilliseconds} ms, first audio {(audioAt != null ? $"{audioAt.Value - t0} ms" : "none")}): {Truncate(prompt, 40)} -> {Truncate(reply, 60)}");
+                if (resp.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                {
+                    // The server drives a single viewer; another connection (or a drop)
+                    // replaces the speaker and our session with it. Reconnect once and
+                    // retry this prompt.
+                    Console.Error.WriteLine("ask: session lost (400) - reconnecting viewer");
+                    await viewer.DisposeAsync();
+                    viewer = await BenchViewer.ConnectAsync(target);
+                    viewer.ArmAudioLatch();
+                    t0 = Environment.TickCount64;
+                    sw.Restart();
+                    resp = await http.PostAsync($"{target}/ask", new StringContent(prompt));
+                }
+                resp.EnsureSuccessStatusCode();
+                var reply = await resp.Content.ReadAsStringAsync();
+                // /ask returns once the reply text is assembled (speech continues in the
+                // background), so this is client-observed full-reply latency.
+                clientMs.Add(sw.Elapsed.TotalMilliseconds);
 
-        // Let queued speech drain so TTS/lip-sync timings attach to the right utterance
-        // and consecutive prompts don't contend for the speak lock.
-        await Task.Delay(TimeSpan.FromSeconds(8));
+                long? audioAt = await viewer.WaitForAudibleAudioAsync(TimeSpan.FromSeconds(30));
+                if (audioAt != null) { firstAudioMs.Add(audioAt.Value - t0); }
+                Console.Error.WriteLine($"ask ({sw.ElapsedMilliseconds} ms, first audio {(audioAt != null ? $"{audioAt.Value - t0} ms" : "none")}): {Truncate(prompt, 40)} -> {Truncate(reply, 60)}");
+
+                // Drain the utterance fully (wait for sustained silence) so the next prompt's
+                // first-audio can't latch onto this reply's tail and TTS/lip-sync timings
+                // attach to the right utterance. No audio at all -> nothing to drain.
+                if (audioAt != null)
+                {
+                    await viewer.WaitForSilenceAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(90));
+                }
+            }
+            catch (Exception excp)
+            {
+                failures++;
+                Console.Error.WriteLine($"ask: prompt failed ({excp.Message}); continuing");
+            }
+        }
+    }
+    finally
+    {
+        await viewer.DisposeAsync();
     }
 
     var serverAgg = await FetchAggregates();
@@ -124,16 +166,26 @@ async Task RunAsk()
     {
         summary.AppendLine(StatsRow("prompt_to_first_audio (end-to-end)", firstAudioMs));
     }
-    summary.AppendLine(StatsRow("client_ask_roundtrip (full reply text)", clientMs));
+    if (clientMs.Count > 0)
+    {
+        summary.AppendLine(StatsRow("client_ask_roundtrip (full reply text)", clientMs));
+    }
     foreach (var stage in new[] { "llm_first_sentence", "llm_stream_complete", "tts_synth" })
     {
         if (serverAgg?[stage] is JsonObject o) { summary.AppendLine(AggRow(stage, o)); }
     }
     summary.AppendLine();
 
+    if (failures > 0)
+    {
+        summary.AppendLine($"_({failures} of {askIterations} prompts failed and were skipped.)_");
+        summary.AppendLine();
+    }
+
     results["ask"] = new JsonObject
     {
         ["iterations"] = askIterations,
+        ["failures"] = failures,
         ["client_ms"] = new JsonArray(clientMs.Select(v => JsonValue.Create(Math.Round(v, 1))).ToArray()),
         ["first_audio_ms"] = new JsonArray(firstAudioMs.Select(v => JsonValue.Create(Math.Round(v, 1))).ToArray()),
         ["server_aggregates"] = serverAgg?.DeepClone(),
@@ -378,9 +430,27 @@ sealed class BenchViewer : IAsyncDisposable
         catch (TimeoutException) { return null; }
     }
 
+    /// <summary>Waits until no audible audio has arrived for <paramref name="quiet"/> (i.e. the
+    /// current utterance has fully drained), or gives up after <paramref name="timeout"/>.</summary>
+    public async Task WaitForSilenceAsync(TimeSpan quiet, TimeSpan timeout)
+    {
+        long deadline = Environment.TickCount64 + (long)timeout.TotalMilliseconds;
+        while (Environment.TickCount64 < deadline)
+        {
+            long last = Interlocked.Read(ref _lastAudibleAt);
+            if (last > 0 && Environment.TickCount64 - last >= quiet.TotalMilliseconds)
+            {
+                return;
+            }
+            await Task.Delay(250);
+        }
+    }
+
+    private long _lastAudibleAt;
+
     private void OnRtp(System.Net.IPEndPoint remote, SDPMediaTypesEnum media, RTPPacket packet)
     {
-        if (media != SDPMediaTypesEnum.audio || _audioLatch.Task.IsCompleted)
+        if (media != SDPMediaTypesEnum.audio)
         {
             return;
         }
@@ -397,6 +467,7 @@ sealed class BenchViewer : IAsyncDisposable
         }
         if (sum / payload.Length > 200)
         {
+            Interlocked.Exchange(ref _lastAudibleAt, Environment.TickCount64);
             _audioLatch.TrySetResult(Environment.TickCount64);
         }
     }
