@@ -53,9 +53,12 @@ jobs:
         run: |
           TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
           ITERATIONS="${{ github.event.inputs.iterations || '5' }}"
+          VERSION="$(curl --fail --silent --show-error "$TARGET/version")"
+          DEPLOYED_SHA="$(node -e 'console.log(JSON.parse(process.argv[1]).sha || "unknown")' "$VERSION")"
+          LABEL="${{ github.event.inputs.deployment || 'claude' }}-${DEPLOYED_SHA:0:8}"
           dotnet run --project src/MaxBench -c Release -- all \
             --target "$TARGET" --iterations "$ITERATIONS" --json bench-results.json \
-            --label "${GITHUB_SHA::8}" | tee bench-summary.md
+            --label "$LABEL" | tee bench-summary.md
           cat bench-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload HTTP/API results
         if: always()
@@ -153,8 +156,9 @@ jobs:
           git fetch origin bench-data
           git worktree add ../bench-data origin/bench-data
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          HTTP_LABEL="$(node -e 'const r=JSON.parse(require("fs").readFileSync("artifacts/http/bench-results.json")); console.log((r.label || "unknown").replace(/[^A-Za-z0-9._-]/g, "-"))')"
           WEBRTC_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("artifacts/webrtc/webrtc-result.json")).source.commitSha.slice(0, 8))')"
-          cp artifacts/http/bench-results.json "../bench-data/runs/${STAMP}-http-${GITHUB_SHA::8}.json"
+          cp artifacts/http/bench-results.json "../bench-data/runs/${STAMP}-http-${HTTP_LABEL}.json"
           cp artifacts/webrtc/webrtc-result.json "../bench-data/runs/${STAMP}-webrtc-${WEBRTC_SHA}.json"
           for seed in benchmarks/webrtc/history-seed/*.json; do
             destination="../bench-data/runs/webrtc-$(basename "$seed")"
