@@ -332,12 +332,25 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             // Only recorded while speaking - idle ticks are cheap and would swamp the buffer.
             var tickClock = _speaking ? System.Diagnostics.Stopwatch.StartNew() : null;
 
+            // Three sub-stages of the tick, to find out which one is actually eating the
+            // budget rather than guessing: mouth inference (already separately timed as
+            // wav2lip_infer when a new frame is computed - this wraps the whole call,
+            // including the cheap "reuse last mouth" path), SkiaSharp compositing (matte
+            // blend, VHS grade, warp/blink - all per-pixel managed code, prime suspect),
+            // and the FFmpeg encode (openh264, tuned zerolatency - expected to be cheap).
+            var mouthClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var mouth = NextMouth();
+            if (mouthClock != null) { BenchMetrics.Record("render_mouth", mouthClock.Elapsed.TotalMilliseconds); }
+
+            var composeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var bgr = RenderFrame(mouth, _frameIdx);
+            if (composeClock != null) { BenchMetrics.Record("render_compose", composeClock.Elapsed.TotalMilliseconds); }
             _frameIdx++;
 
+            var encodeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var encoded = _videoEncoder.EncodeVideo(WIDTH, HEIGHT, bgr, VideoPixelFormatsEnum.Bgr,
                 _formatManager.SelectedFormat.Codec);
+            if (encodeClock != null) { BenchMetrics.Record("render_encode", encodeClock.Elapsed.TotalMilliseconds); }
             if (encoded != null)
             {
                 // Truthful RTP durations: a fixed 3600/frame lets the video RTP clock fall
