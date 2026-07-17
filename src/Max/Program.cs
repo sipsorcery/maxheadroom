@@ -1,4 +1,4 @@
-﻿//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Filename: Program.cs
 //
 // Description: A WebRTC demo that serves a "Max Headroom" talking avatar - a photoreal
@@ -100,6 +100,12 @@ class Program
     private static int _visemeLeadMs = 0;
     private static bool _waitForIceGatheringToSendAnswer;
     private static string _stunUrl = string.Empty;
+
+    // Sample rate the WebRTC speech-recognition chain runs at. The audio track negotiates
+    // Opus (wideband, 48kHz on the wire) with PCMU as a fallback; decoded mic audio is
+    // resampled down to this rate before the recogniser, and ElevenLabs scribe / sherpa
+    // both take 16kHz natively - a strictly better signal than the old 8kHz G.711 chain.
+    private const int RecognizerSampleRate = 16000;
 
     static async Task Main()
     {
@@ -609,10 +615,14 @@ class Program
         // prompts. A continuous audio clock keeps the browser's jitter buffer and the
         // RTCP A/V sync stable; with bursty audio (None) the lip-sync drifts ahead of
         // the voice over successive prompts.
-        var audioSource = new AudioExtrasSource(new AudioEncoder(), new AudioSourceOptions { AudioSource = AudioSourcesEnum.Silence });
-        // Restrict to PCMU so the call audio - and the received microphone - is a deterministic 8kHz
-        // G.711 stream, which the speech recogniser consumes after decoding.
-        audioSource.RestrictFormats(f => f.Codec == AudioCodecsEnum.PCMU);
+        var audioSource = new AudioExtrasSource(
+            new AudioEncoder(AudioCommonlyUsedFormats.OpusWebRTC, new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU)),
+            new AudioSourceOptions { AudioSource = AudioSourcesEnum.Silence });
+        // Opus first: browsers guarantee it, and it carries the mic (and the avatar voice)
+        // wideband instead of the 8kHz G.711 narrowband the PCMU-only track pinned us to.
+        // PCMU stays advertised as a fallback; the mic decode below follows whatever was
+        // actually negotiated via frame.AudioFormat. On the send side AudioExtrasSource
+        // resamples the 16kHz TTS PCM to the Opus 48kHz clock and encodes it itself.
         // SendRecv (not SendOnly) so the browser microphone reaches the server for speech recognition.
         var audioTrack = new MediaStreamTrack(audioSource.GetAudioSourceFormats(), MediaStreamStatusEnum.SendRecv);
         pc.addTrack(audioTrack);
@@ -623,21 +633,25 @@ class Program
         ISpeechRecognizer recognizer = null;
         if (speaker != null)
         {
-            // Speech-to-text: decode the received microphone RTP (PCMU -> 8kHz PCM) and feed the STT engine.
-            // Recognised utterances run through the same LLM->speak path as /ask, so typing a prompt and
-            // speaking one are parallel inputs to the exact same pipeline.
+            // Speech-to-text: decode the received microphone RTP (Opus -> 48kHz PCM, or
+            // PCMU -> 8kHz if that fallback negotiated) and resample to the recogniser's
+            // 16kHz. Recognised utterances run through the same LLM->speak path as /ask,
+            // so typing a prompt and speaking one are parallel inputs to the exact same pipeline.
             recognizer = CreateRecognizer();
             if (recognizer != null)
             {
                 recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text, benchmarkSession);
 
                 var micDecoder = new AudioEncoder();
-                var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);
                 pc.OnAudioFrameReceived += frame =>
                 {
                     try
                     {
-                        var pcm = micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat);
+                        var pcm = micDecoder.DecodeAudio(frame.EncodedAudio, frame.AudioFormat);
+                        if (frame.AudioFormat.ClockRate != RecognizerSampleRate)
+                        {
+                            pcm = PcmResampler.Resample(pcm, frame.AudioFormat.ClockRate, RecognizerSampleRate);
+                        }
                         benchmarkSession?.RecordReceivedAudio(pcm);
                         recognizer.Write(pcm);
                     }
@@ -896,12 +910,12 @@ class Program
         if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
         {
             return _elevenLabsStreaming
-                ? new ElevenLabsStreamingSpeechRecognizer(_elevenLabsKey, _elevenLabsSttRealtimeModel)
-                : new ElevenLabsSpeechRecognizer(_elevenLabsKey, _elevenLabsSttModel);
+                ? new ElevenLabsStreamingSpeechRecognizer(_elevenLabsKey, _elevenLabsSttRealtimeModel, sampleRate: RecognizerSampleRate)
+                : new ElevenLabsSpeechRecognizer(_elevenLabsKey, _elevenLabsSttModel, RecognizerSampleRate);
         }
         if (SherpaSpeechRecognizer.FilesPresent())
         {
-            return new SherpaSpeechRecognizer();
+            return new SherpaSpeechRecognizer(sampleRate: RecognizerSampleRate);
         }
         _logger.LogWarning("No STT configured (download a model folder to C:\\tools\\sherpa-stt or set SHERPA_STT_DIR / ELEVENLABS_API_KEY). The avatar can speak but not listen.");
         return null;

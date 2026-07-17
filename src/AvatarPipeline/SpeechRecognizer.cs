@@ -35,21 +35,33 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
 {
     private static readonly ILogger logger = SIPSorcery.LogFactory.CreateLogger<SpeechRecognizer>();
 
-    // VAD / segmentation tuning, all against the incoming 8kHz stream.
-    protected const int SampleRate = 8000;
+    // VAD / segmentation tuning, all scaled off the recogniser's input rate. The WebRTC
+    // mic path runs at 16kHz (Opus decode -> downsample); the offline --stt-test and
+    // /bench/stt paths stay at the legacy 8kHz via the constructor default.
+    protected readonly int SampleRate;
     private const double SilenceRmsThreshold = 350.0;               // RMS below this (16-bit) counts as silence.
 
-    // Trailing silence that ends an utterance (default ~0.6s). Overridable with
-    // STT_TRAILING_SILENCE_MS (clamped 100-5000) to trade endpointing latency
-    // against premature cut-offs.
-    private static readonly int TrailingSilenceSamples = SampleRate * GetTrailingSilenceMs() / 1000;
+    private readonly int _trailingSilenceSamples;
+    private readonly int _maxUtteranceSamples;                      // Hard cap so we always flush eventually.
+    private readonly int _minUtteranceSamples;                      // Ignore blips shorter than ~0.3s.
+
+    /// <param name="sampleRate">Rate of the PCM pushed into Write (8000 or 16000).</param>
+    protected SpeechRecognizer(int sampleRate = 8000)
+    {
+        SampleRate = sampleRate;
+
+        // Trailing silence that ends an utterance (default ~0.6s). Overridable with
+        // STT_TRAILING_SILENCE_MS (clamped 100-5000) to trade endpointing latency
+        // against premature cut-offs.
+        _trailingSilenceSamples = SampleRate * GetTrailingSilenceMs() / 1000;
+        _maxUtteranceSamples = SampleRate * 15;
+        _minUtteranceSamples = SampleRate * 3 / 10;
+    }
 
     private static int GetTrailingSilenceMs() =>
         int.TryParse(Environment.GetEnvironmentVariable("STT_TRAILING_SILENCE_MS"), out var ms) && ms >= 100 && ms <= 5000
             ? ms
             : 600;
-    private const int MaxUtteranceSamples = SampleRate * 15;        // Hard cap so we always flush eventually.
-    private const int MinUtteranceSamples = SampleRate * 3 / 10;    // Ignore blips shorter than ~0.3s.
 
     private readonly List<short> _utterance = new();
     private bool _hasSpeech;
@@ -75,8 +87,8 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
     /// <summary>One-off engine initialisation (e.g. load a model), called before the worker starts.</summary>
     protected abstract Task InitAsync();
 
-    /// <summary>Transcribes one completed utterance of 8kHz 16-bit mono PCM to text.</summary>
-    protected abstract Task<string> TranscribeAsync(short[] pcm8k);
+    /// <summary>Transcribes one completed utterance of 16-bit mono PCM (at SampleRate) to text.</summary>
+    protected abstract Task<string> TranscribeAsync(short[] pcm);
 
     /// <summary>Initialises the engine and starts the background recognition worker; safe to call once.</summary>
     public async Task StartAsync()
@@ -93,7 +105,7 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
         logger.LogInformation("{Engine} speech recognition started. Speak to the avatar.", EngineName);
     }
 
-    /// <summary>Pushes a block of decoded 8kHz 16-bit mono PCM into the recogniser.</summary>
+    /// <summary>Pushes a block of decoded 16-bit mono PCM (at SampleRate) into the recogniser.</summary>
     public void Write(short[] pcm)
     {
         if (_disposed || !_started || pcm == null || pcm.Length == 0)
@@ -117,7 +129,7 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
         }
         // else: leading silence before any speech - drop it so we never transcribe pure silence.
 
-        if (_hasSpeech && (_trailingSilence >= TrailingSilenceSamples || _utterance.Count >= MaxUtteranceSamples))
+        if (_hasSpeech && (_trailingSilence >= _trailingSilenceSamples || _utterance.Count >= _maxUtteranceSamples))
         {
             Flush();
         }
@@ -125,7 +137,7 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
 
     private void Flush()
     {
-        if (_utterance.Count >= MinUtteranceSamples)
+        if (_utterance.Count >= _minUtteranceSamples)
         {
             _utterances.Writer.TryWrite(_utterance.ToArray());
         }
@@ -139,18 +151,18 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
     {
         try
         {
-            await foreach (var pcm8k in _utterances.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
+            await foreach (var pcm in _utterances.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
             {
                 string text;
                 try
                 {
                     // Engine transcription cost per utterance. NOTE: the user-perceived
-                    // delay additionally includes the fixed ~0.6s VAD trailing-silence
-                    // window (TrailingSilenceSamples) that ends the utterance.
+                    // delay additionally includes the fixed VAD trailing-silence
+                    // window (STT_TRAILING_SILENCE_MS) that ends the utterance.
                     var sttClock = System.Diagnostics.Stopwatch.StartNew();
-                    text = Clean(await TranscribeAsync(pcm8k).ConfigureAwait(false));
+                    text = Clean(await TranscribeAsync(pcm).ConfigureAwait(false));
                     BenchMetrics.Record("stt_latency", sttClock.Elapsed.TotalMilliseconds,
-                        $"audioMs={pcm8k.Length * 1000 / SampleRate}");
+                        $"audioMs={pcm.Length * 1000 / SampleRate}");
                 }
                 catch (Exception excp)
                 {

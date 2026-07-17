@@ -41,7 +41,10 @@ public sealed class ElevenLabsSpeechRecognizer : SpeechRecognizer
 
     /// <param name="apiKey">ElevenLabs API key (sent as the xi-api-key header).</param>
     /// <param name="modelId">Speech-to-text model id, e.g. "scribe_v1".</param>
-    public ElevenLabsSpeechRecognizer(string apiKey, string modelId = "scribe_v1")
+    /// <param name="sampleRate">Rate of the utterance PCM pushed into Write (scribe accepts
+    /// wideband WAV; 16kHz from the Opus mic path gives it a cleaner signal than 8kHz G.711).</param>
+    public ElevenLabsSpeechRecognizer(string apiKey, string modelId = "scribe_v1", int sampleRate = 8000)
+        : base(sampleRate)
     {
         _apiKey = apiKey;
         _modelId = string.IsNullOrWhiteSpace(modelId) ? "scribe_v1" : modelId;
@@ -49,9 +52,9 @@ public sealed class ElevenLabsSpeechRecognizer : SpeechRecognizer
 
     protected override Task InitAsync() => Task.CompletedTask; // Nothing to load; it's a remote service.
 
-    protected override async Task<string> TranscribeAsync(short[] pcm8k)
+    protected override async Task<string> TranscribeAsync(short[] pcm)
     {
-        var wav = ToWav(pcm8k, SampleRate);
+        var wav = ToWav(pcm, SampleRate);
 
         using var form = new MultipartFormDataContent();
         form.Add(new StringContent(_modelId), "model_id");
