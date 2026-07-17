@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="320" viewBox="0 0 900 320" font-family="sans-serif">
+<rect width="100%" height="100%" fill="white"/>
+<text x="24" y="28" font-size="17" fill="#222">Latest pipeline stage latency — p50, lower is better</text>
+<text x="170" y="75" text-anchor="end" font-size="13" fill="#333">STT final</text>
+<rect x="180" y="58" width="133.0" height="24" rx="3" fill="#4c78a8"/>
+<text x="321.0" y="75" font-size="12" fill="#333">1,538 ms</text>
+<text x="170" y="133" text-anchor="end" font-size="13" fill="#333">LLM first token</text>
+<rect x="180" y="116" width="27.6" height="24" rx="3" fill="#59a14f"/>
+<text x="215.6" y="133" font-size="12" fill="#333">319 ms</text>
+<text x="170" y="191" text-anchor="end" font-size="13" fill="#333">TTS to first audio</text>
+<rect x="180" y="174" width="650.0" height="24" rx="3" fill="#e15759"/>
+<text x="835.0" y="191" font-size="12" fill="#333">7,517 ms</text>
+<text x="170" y="249" text-anchor="end" font-size="13" fill="#333">First mouth frame</text>
+<rect x="180" y="232" width="36.3" height="24" rx="3" fill="#b279a2"/>
+<text x="224.3" y="249" font-size="12" fill="#333">420 ms</text>
+</svg>
