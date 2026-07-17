@@ -441,13 +441,32 @@ class Program
         {
             try
             {
-                await foreach (var sentence in sentences.Reader.ReadAllAsync())
+                // Drop stale (superseded-turn) sentences before they ever reach the speaker,
+                // same as the old inline check - just expressed as a filter so it composes
+                // with SpeakQueueAsync's IAsyncEnumerable<string> signature below.
+                async IAsyncEnumerable<string> CurrentTurnOnly()
                 {
-                    // A newer turn has started (barge-in) - drop this stale sentence instead
-                    // of speaking it. Keep draining rather than stopping outright so the
-                    // channel (and its writer above) can still complete normally.
-                    if (!IsCurrentTurn(myTurn)) { continue; }
-                    await speaker.SpeakAsync(sentence);
+                    await foreach (var sentence in sentences.Reader.ReadAllAsync())
+                    {
+                        if (IsCurrentTurn(myTurn)) { yield return sentence; }
+                    }
+                }
+
+                if (speaker is LipSyncTtsSpeaker lipSync)
+                {
+                    // Prefetches clause N+1's synthesis while clause N is still playing
+                    // (see LipSyncTtsSpeaker's file header - the #13 investigation) instead
+                    // of the strictly serial speak-one-clause-at-a-time loop this replaces.
+                    await lipSync.SpeakQueueAsync(CurrentTurnOnly()).ConfigureAwait(false);
+                }
+                else
+                {
+                    // Defensive fallback for any future IAvatarSpeaker that is neither
+                    // IStreamingAvatarSpeaker (handled above) nor LipSyncTtsSpeaker.
+                    await foreach (var sentence in CurrentTurnOnly())
+                    {
+                        await speaker.SpeakAsync(sentence);
+                    }
                 }
             }
             catch (Exception excp)
