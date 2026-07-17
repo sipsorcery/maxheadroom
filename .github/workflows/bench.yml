@@ -85,6 +85,10 @@ jobs:
         # Chrome is supplied by the runner; avoid downloading Playwright's
         # bundled Chromium, which cannot decode Max's H264 stream everywhere.
         run: npm install --ignore-scripts
+      - name: Install audio preparation tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
       - name: Prepare deterministic prompt audio
         run: |
           mkdir -p bench-webrtc
