@@ -956,6 +956,7 @@ class Program
             sttEngine,
             sttModel,
             sttTrailingSilenceMs = SpeechRecognizer.ActiveTrailingSilenceMilliseconds,
+            wav2lipInferenceStride = Wav2LipAvatarRenderer.InferenceStride,
             avatarRenderer = rendererKind,
         };
         static string DirName(string path) => string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));

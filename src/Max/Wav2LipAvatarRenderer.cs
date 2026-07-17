@@ -67,6 +67,14 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
     };
 
     private static readonly ILogger logger = SIPSorcery.LogFactory.CreateLogger<Wav2LipAvatarRenderer>();
+    /// <summary>Number of output frames between Wav2Lip inferences; one preserves 25fps inference.</summary>
+    public static int InferenceStride { get; } = ReadInferenceStride();
+
+    private static int ReadInferenceStride()
+    {
+        var value = Environment.GetEnvironmentVariable("WAV2LIP_INFERENCE_STRIDE");
+        return int.TryParse(value, out var stride) && stride >= 1 && stride <= 4 ? stride : 1;
+    }
 
     // Renderers are created per peer connection; the ONNX session (model load + DirectML
     // kernel compilation) is heavy and stateless, so share one per model path for the app's life.
@@ -422,6 +430,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
             // Clamp to the last frame whose mel window is fully within the solid columns.
             int maxFrame = (int)((solid - MEL_STEP) / MEL_PER_FRAME);
             int frame = Math.Min(target, maxFrame);
+            frame -= frame % InferenceStride;
             if (frame > _mouthFrame)
             {
                 _mouthFrame = frame;
