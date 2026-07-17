@@ -1,0 +1,235 @@
+{
+  "target": "https://max-kimi.sipsorcery.com",
+  "utc": "2026-07-17T22:02:12.1217609Z",
+  "mode": "all",
+  "label": "kimi-exp7-opus-37ebc1ba",
+  "llm_model": "mistral-3-14B",
+  "ask": {
+    "iterations": 5,
+    "failures": 0,
+    "client_ms": [
+      1321.8,
+      622.3,
+      769.5,
+      1063.4,
+      1078.1
+    ],
+    "first_audio_ms": [
+      897,
+      828,
+      879,
+      1276,
+      898
+    ],
+    "server_aggregates": {
+      "render_mouth": {
+        "count": 340,
+        "mean": 49.7,
+        "min": 0.0008,
+        "p50": 62.6,
+        "p95": 84.4,
+        "max": 109.9551
+      },
+      "render_grade": {
+        "count": 334,
+        "mean": 3.6,
+        "min": 2.0762,
+        "p50": 3.2,
+        "p95": 6.1,
+        "max": 14.8866
+      },
+      "render_compose": {
+        "count": 340,
+        "mean": 25.9,
+        "min": 20.5798,
+        "p50": 25.3,
+        "p95": 32.5,
+        "max": 36.9188
+      },
+      "render_encode": {
+        "count": 340,
+        "mean": 4.5,
+        "min": 2.0065,
+        "p50": 4.1,
+        "p95": 7.5,
+        "max": 9.6158
+      },
+      "render_tick": {
+        "count": 340,
+        "mean": 80.6,
+        "min": 23.2451,
+        "p50": 93,
+        "p95": 114.9,
+        "max": 135.6709
+      },
+      "wav2lip_infer": {
+        "count": 249,
+        "mean": 66.5,
+        "min": 53.4004,
+        "p50": 64.5,
+        "p95": 85.8,
+        "max": 108.9552
+      },
+      "llm_ttft": {
+        "count": 4,
+        "mean": 474.8,
+        "min": 325.568,
+        "p50": 423.5,
+        "p95": 683.4,
+        "max": 726.596
+      },
+      "llm_first_sentence": {
+        "count": 4,
+        "mean": 575.7,
+        "min": 390.5103,
+        "p50": 536.5,
+        "p95": 801.5,
+        "max": 839.1619
+      },
+      "llm_stream_complete": {
+        "count": 4,
+        "mean": 735.1,
+        "min": 473.9254,
+        "p50": 768.1,
+        "p95": 928.1,
+        "max": 930.5216
+      },
+      "tts_synth": {
+        "count": 15,
+        "mean": 156.2,
+        "min": 114.313,
+        "p50": 144.8,
+        "p95": 212.1,
+        "max": 224.4729
+      },
+      "tts_first_chunk": {
+        "count": 15,
+        "mean": 156.2,
+        "min": 114.3236,
+        "p50": 144.8,
+        "p95": 212.2,
+        "max": 224.5072
+      },
+      "lipsync_first_mouth": {
+        "count": 15,
+        "mean": 212.9,
+        "min": 103,
+        "p50": 204,
+        "p95": 366.2,
+        "max": 418
+      }
+    }
+  },
+  "stt": {
+    "overall_wer": 0.0375,
+    "clips": [
+      {
+        "name": "OSR_us_000_0010_8k.wav",
+        "wer": 0.0375,
+        "words": 80,
+        "errors": 3,
+        "stt_ms": 10914.8,
+        "audio_ms": 33623,
+        "transcript": "The birch canoe slid on the smooth planks. Glue the sheet to the dark blue background. It is easy to tell the depth of a well. These days, a chicken leg is a rare dish. Rice is often served in round bowls. The juice of lemons makes fine punch. The box was thrown beside the park truck. The hogs were fed chopped corn and garbage. Four hours of steady work faced us. A large size in stockings is hard to sell."
+      }
+    ]
+  },
+  "server_metrics": {
+    "render_mouth": {
+      "count": 340,
+      "mean": 49.7,
+      "min": 0.0008,
+      "p50": 62.6,
+      "p95": 84.4,
+      "max": 109.9551
+    },
+    "render_grade": {
+      "count": 334,
+      "mean": 3.6,
+      "min": 2.0762,
+      "p50": 3.2,
+      "p95": 6.1,
+      "max": 14.8866
+    },
+    "render_compose": {
+      "count": 340,
+      "mean": 25.9,
+      "min": 20.5798,
+      "p50": 25.3,
+      "p95": 32.5,
+      "max": 36.9188
+    },
+    "render_encode": {
+      "count": 340,
+      "mean": 4.5,
+      "min": 2.0065,
+      "p50": 4.1,
+      "p95": 7.5,
+      "max": 9.6158
+    },
+    "render_tick": {
+      "count": 340,
+      "mean": 80.6,
+      "min": 23.2451,
+      "p50": 93,
+      "p95": 114.9,
+      "max": 135.6709
+    },
+    "wav2lip_infer": {
+      "count": 249,
+      "mean": 66.5,
+      "min": 53.4004,
+      "p50": 64.5,
+      "p95": 85.8,
+      "max": 108.9552
+    },
+    "llm_ttft": {
+      "count": 4,
+      "mean": 474.8,
+      "min": 325.568,
+      "p50": 423.5,
+      "p95": 683.4,
+      "max": 726.596
+    },
+    "llm_first_sentence": {
+      "count": 4,
+      "mean": 575.7,
+      "min": 390.5103,
+      "p50": 536.5,
+      "p95": 801.5,
+      "max": 839.1619
+    },
+    "llm_stream_complete": {
+      "count": 4,
+      "mean": 735.1,
+      "min": 473.9254,
+      "p50": 768.1,
+      "p95": 928.1,
+      "max": 930.5216
+    },
+    "tts_synth": {
+      "count": 15,
+      "mean": 156.2,
+      "min": 114.313,
+      "p50": 144.8,
+      "p95": 212.1,
+      "max": 224.4729
+    },
+    "tts_first_chunk": {
+      "count": 15,
+      "mean": 156.2,
+      "min": 114.3236,
+      "p50": 144.8,
+      "p95": 212.2,
+      "max": 224.5072
+    },
+    "lipsync_first_mouth": {
+      "count": 15,
+      "mean": 212.9,
+      "min": 103,
+      "p50": 204,
+      "p95": 366.2,
+      "max": 418
+    }
+  }
+}
