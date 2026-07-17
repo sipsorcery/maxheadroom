@@ -16,38 +16,41 @@
 <line x1="70" y1="290.1" x2="880" y2="290.1" stroke="#d62728" stroke-width="1.5" stroke-dasharray="6,4"/>
 <text x="876" y="285.1" font-size="11" fill="#d62728" text-anchor="end">budget 40ms</text>
 <text x="70.0" y="342" font-size="11" fill="#666" text-anchor="start">07-16 16:02</text>
-<text x="475.0" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 22:30</text>
-<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-17 15:13</text>
-<polyline points="434.5,200.4 596.5,115.1 637.0,190.8 677.5,188.6 718.0,206.5 758.5,64.7 799.0,206.6 839.5,110.6 880.0,210.4" fill="none" stroke="#8c564b" stroke-width="2"/>
-<circle cx="434.5" cy="200.4" r="3" fill="#8c564b"/>
-<circle cx="596.5" cy="115.1" r="3" fill="#8c564b"/>
-<circle cx="637.0" cy="190.8" r="3" fill="#8c564b"/>
-<circle cx="677.5" cy="188.6" r="3" fill="#8c564b"/>
-<circle cx="718.0" cy="206.5" r="3" fill="#8c564b"/>
-<circle cx="758.5" cy="64.7" r="3" fill="#8c564b"/>
-<circle cx="799.0" cy="206.6" r="3" fill="#8c564b"/>
-<circle cx="839.5" cy="110.6" r="3" fill="#8c564b"/>
-<circle cx="880.0" cy="210.4" r="3" fill="#8c564b"/>
+<text x="494.3" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 22:34</text>
+<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-17 15:18</text>
+<polyline points="417.1,200.4 571.4,115.1 610.0,190.8 648.6,188.6 687.1,206.5 725.7,64.7 764.3,206.6 802.9,110.6 841.4,210.4 880.0,204.3" fill="none" stroke="#8c564b" stroke-width="2"/>
+<circle cx="417.1" cy="200.4" r="3" fill="#8c564b"/>
+<circle cx="571.4" cy="115.1" r="3" fill="#8c564b"/>
+<circle cx="610.0" cy="190.8" r="3" fill="#8c564b"/>
+<circle cx="648.6" cy="188.6" r="3" fill="#8c564b"/>
+<circle cx="687.1" cy="206.5" r="3" fill="#8c564b"/>
+<circle cx="725.7" cy="64.7" r="3" fill="#8c564b"/>
+<circle cx="764.3" cy="206.6" r="3" fill="#8c564b"/>
+<circle cx="802.9" cy="110.6" r="3" fill="#8c564b"/>
+<circle cx="841.4" cy="210.4" r="3" fill="#8c564b"/>
+<circle cx="880.0" cy="204.3" r="3" fill="#8c564b"/>
 <rect x="70.0" y="358" width="10" height="10" fill="#8c564b"/>
 <text x="84.0" y="367" font-size="11" fill="#333">render tick (p95)</text>
-<polyline points="637.0,264.3 677.5,267.4 718.0,272.5 758.5,268.8 799.0,268.7 839.5,271.8 880.0,273.3" fill="none" stroke="#1f77b4" stroke-width="2"/>
-<circle cx="637.0" cy="264.3" r="3" fill="#1f77b4"/>
-<circle cx="677.5" cy="267.4" r="3" fill="#1f77b4"/>
-<circle cx="718.0" cy="272.5" r="3" fill="#1f77b4"/>
-<circle cx="758.5" cy="268.8" r="3" fill="#1f77b4"/>
-<circle cx="799.0" cy="268.7" r="3" fill="#1f77b4"/>
-<circle cx="839.5" cy="271.8" r="3" fill="#1f77b4"/>
-<circle cx="880.0" cy="273.3" r="3" fill="#1f77b4"/>
+<polyline points="610.0,264.3 648.6,267.4 687.1,272.5 725.7,268.8 764.3,268.7 802.9,271.8 841.4,273.3 880.0,266.0" fill="none" stroke="#1f77b4" stroke-width="2"/>
+<circle cx="610.0" cy="264.3" r="3" fill="#1f77b4"/>
+<circle cx="648.6" cy="267.4" r="3" fill="#1f77b4"/>
+<circle cx="687.1" cy="272.5" r="3" fill="#1f77b4"/>
+<circle cx="725.7" cy="268.8" r="3" fill="#1f77b4"/>
+<circle cx="764.3" cy="268.7" r="3" fill="#1f77b4"/>
+<circle cx="802.9" cy="271.8" r="3" fill="#1f77b4"/>
+<circle cx="841.4" cy="273.3" r="3" fill="#1f77b4"/>
+<circle cx="880.0" cy="266.0" r="3" fill="#1f77b4"/>
 <rect x="340.0" y="358" width="10" height="10" fill="#1f77b4"/>
 <text x="354.0" y="367" font-size="11" fill="#333">render mouth (wav2lip)</text>
-<polyline points="637.0,296.0 677.5,300.2 718.0,301.8 758.5,299.8 799.0,298.2 839.5,301.8 880.0,302.0" fill="none" stroke="#2ca02c" stroke-width="2"/>
-<circle cx="637.0" cy="296.0" r="3" fill="#2ca02c"/>
-<circle cx="677.5" cy="300.2" r="3" fill="#2ca02c"/>
-<circle cx="718.0" cy="301.8" r="3" fill="#2ca02c"/>
-<circle cx="758.5" cy="299.8" r="3" fill="#2ca02c"/>
-<circle cx="799.0" cy="298.2" r="3" fill="#2ca02c"/>
-<circle cx="839.5" cy="301.8" r="3" fill="#2ca02c"/>
-<circle cx="880.0" cy="302.0" r="3" fill="#2ca02c"/>
+<polyline points="610.0,296.0 648.6,300.2 687.1,301.8 725.7,299.8 764.3,298.2 802.9,301.8 841.4,302.0 880.0,295.5" fill="none" stroke="#2ca02c" stroke-width="2"/>
+<circle cx="610.0" cy="296.0" r="3" fill="#2ca02c"/>
+<circle cx="648.6" cy="300.2" r="3" fill="#2ca02c"/>
+<circle cx="687.1" cy="301.8" r="3" fill="#2ca02c"/>
+<circle cx="725.7" cy="299.8" r="3" fill="#2ca02c"/>
+<circle cx="764.3" cy="298.2" r="3" fill="#2ca02c"/>
+<circle cx="802.9" cy="301.8" r="3" fill="#2ca02c"/>
+<circle cx="841.4" cy="302.0" r="3" fill="#2ca02c"/>
+<circle cx="880.0" cy="295.5" r="3" fill="#2ca02c"/>
 <rect x="610.0" y="358" width="10" height="10" fill="#2ca02c"/>
 <text x="624.0" y="367" font-size="11" fill="#333">render compose (SkiaSharp)</text>
 </svg>
