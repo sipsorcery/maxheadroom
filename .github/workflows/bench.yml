@@ -1,89 +1,46 @@
-# Max avatar performance bench — measures LLM reply latency, STT accuracy (WER)
-# and lip-sync stage timings against a deployed instance (default: the claude
-# bench instance, which runs with BENCH_ENDPOINTS=true).
-#
-# Deliberately measurement-only: deterministic script, no AI involvement, free
-# on public-repo runners. Cron requires this file on the default branch; until
-# then trigger it manually against the claude branch via workflow_dispatch.
-
+# Benchmark control plane. Scheduled workflows must be defined on the default
+# branch; the reusable implementation and all generated history stay separate.
 name: bench
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: Base URL of the Max instance to bench
+        description: Base URL of the HTTP/API bench instance
         default: https://max-claude.sipsorcery.com
+        type: string
       iterations:
-        description: Number of /ask prompts
+        description: Number of HTTP /ask prompts
         default: "5"
+        type: string
+      webrtc_target:
+        description: Base URL of the browser/WebRTC bench instance
+        default: https://max-codex.sipsorcery.com
+        type: string
+      webrtc_iterations:
+        description: Number of deterministic WebRTC speech transitions
+        default: "3"
+        type: string
+      webrtc_llm_model:
+        description: LLM model name configured on the WebRTC target
+        default: mistral-3-14B
+        type: string
   schedule:
-    - cron: "17 3 * * *"   # nightly, off the hour to be a good citizen
-  # workflow_dispatch/schedule only register once this file reaches the default
-  # branch; push lets agent branches exercise the bench before that.
-  push:
-    branches:
-      - "claude/**"
-      - "codex/**"
+    - cron: "17 3 * * *"
 
-# contents: write lets the job append results to the bench-data branch.
 permissions:
   contents: write
 
-# Serialize runs: two bench passes against the same instance would fight over
-# /bench/reset, and concurrent pushes to bench-data would conflict.
 concurrency:
   group: bench
   cancel-in-progress: false
 
 jobs:
-  bench:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: "8.0.x"
-
-      - name: Cache STT corpus
-        uses: actions/cache@v4
-        with:
-          path: bench/cache
-          key: bench-corpus-${{ hashFiles('bench/corpus.json') }}
-
-      - name: Run bench
-        run: |
-          TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
-          ITERATIONS="${{ github.event.inputs.iterations || '5' }}"
-          dotnet run --project src/MaxBench -c Release -- all \
-            --target "$TARGET" --iterations "$ITERATIONS" --json bench-results.json \
-            --label "${GITHUB_SHA::8}" \
-            | tee bench-summary.md
-          cat bench-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: bench-results-${{ github.run_number }}
-          path: |
-            bench-results.json
-            bench-summary.md
-          if-no-files-found: ignore
-
-      - name: Append to bench history (bench-data branch)
-        if: success()
-        run: |
-          git config user.name "bench-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git fetch origin bench-data
-          git worktree add ../bench-data origin/bench-data
-          STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          cp bench-results.json "../bench-data/runs/${STAMP}-${GITHUB_SHA::8}.json"
-          dotnet run --project src/MaxBench -c Release -- history --history-dir ../bench-data
-          cd ../bench-data
-          git add -A
-          git commit -m "bench: ${STAMP} ${GITHUB_SHA::8} (${{ github.event_name }})"
-          git push origin HEAD:bench-data
+  run:
+    uses: sipsorcery/maxheadroom/.github/workflows/bench.yml@claude/maxheadroom
+    with:
+      target: ${{ inputs.target || 'https://max-claude.sipsorcery.com' }}
+      iterations: ${{ inputs.iterations || '5' }}
+      webrtc_target: ${{ inputs.webrtc_target || 'https://max-codex.sipsorcery.com' }}
+      webrtc_iterations: ${{ inputs.webrtc_iterations || '3' }}
+      webrtc_llm_model: ${{ inputs.webrtc_llm_model || 'mistral-3-14B' }}
