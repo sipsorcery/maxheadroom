@@ -198,7 +198,6 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
     private long _lastEmitMs = -1;
     private SKBitmap _bgCache;
     private int _bgCacheIdx = int.MinValue;
-    private int _frameIdx;
     private bool _isStarted, _isPaused, _isClosed, _faulted;
 
     // Benchmark counters. Stopwatch timestamps and Interlocked updates observe the render loop
@@ -352,9 +351,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
             var mouth = NextMouth();
             if (mouthClock != null) BenchMetrics.Record("render_mouth", mouthClock.Elapsed.TotalMilliseconds);
             var composeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
-            var bgr = RenderFrame(mouth, _frameIdx);
+            // Drive scene animation from wall time, not emitted-frame count. Dropped or held
+            // video frames must not make blinks and head motion run in slow motion.
+            var bgr = RenderFrame(mouth, _videoClock.Elapsed.TotalSeconds);
             if (composeClock != null) BenchMetrics.Record("render_compose", composeClock.Elapsed.TotalMilliseconds);
-            _frameIdx++;
 
             long encodeStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             var encodeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
@@ -603,9 +603,9 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
 
     /// <summary>Composites one full frame: mouth+blink on the matted persona, warped by the
     /// liveness pose over the animated background, then the VHS grade. Returns BGR24.</summary>
-    private byte[] RenderFrame(byte[] mouth96, int idx)
+    private byte[] RenderFrame(byte[] mouth96, double t)
     {
-        double t = idx / (double)FPS;
+        int idx = Math.Max(0, (int)Math.Floor(t * FPS));
 
         if (_bgCache == null || idx - _bgCacheIdx >= BG_EVERY || idx < _bgCacheIdx)
         {
@@ -1086,7 +1086,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
 
         for (int i = 0; i < count; i++)
         {
-            var bgr = RenderFrame(NextMouth(), i);
+            var bgr = RenderFrame(NextMouth(), i / (double)FPS);
             // Save every 10th frame, plus the pose-snap window around t=3.7s (frames 92-98)
             // so liveness glitches are captured.
             if (i % 10 != 0 && !(i >= 92 && i <= 98))
