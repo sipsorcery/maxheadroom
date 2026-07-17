@@ -14,107 +14,113 @@
 <line x1="70" y1="44.0" x2="880" y2="44.0" stroke="#e5e5e5"/>
 <text x="64" y="48.0" font-size="11" fill="#666" text-anchor="end">4483ms</text>
 <text x="70.0" y="342" font-size="11" fill="#666" text-anchor="start">07-16 16:02</text>
-<text x="494.3" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 22:34</text>
-<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-17 15:18</text>
-<polyline points="70.0,148.4 108.6,165.2 185.7,125.1 224.3,247.2 262.9,65.6 301.4,182.0 340.0,73.1 378.6,142.9 417.1,64.7 455.7,203.4 494.3,70.4 532.9,226.9 571.4,185.2 610.0,109.6 648.6,181.0 687.1,172.5 725.7,183.3 764.3,195.9 802.9,176.4 841.4,77.4 880.0,186.8" fill="none" stroke="#d62728" stroke-width="2"/>
+<text x="475.0" y="342" font-size="11" fill="#666" text-anchor="middle">07-16 22:34</text>
+<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-17 15:23</text>
+<polyline points="70.0,148.4 106.8,165.2 180.5,125.1 217.3,247.2 254.1,65.6 290.9,182.0 327.7,73.1 364.5,142.9 401.4,64.7 438.2,203.4 475.0,70.4 511.8,226.9 548.6,185.2 585.5,109.6 622.3,181.0 659.1,172.5 695.9,183.3 732.7,195.9 769.5,176.4 806.4,77.4 843.2,186.8 880.0,142.9" fill="none" stroke="#d62728" stroke-width="2"/>
 <circle cx="70.0" cy="148.4" r="3" fill="#d62728"/>
-<circle cx="108.6" cy="165.2" r="3" fill="#d62728"/>
-<circle cx="185.7" cy="125.1" r="3" fill="#d62728"/>
-<circle cx="224.3" cy="247.2" r="3" fill="#d62728"/>
-<circle cx="262.9" cy="65.6" r="3" fill="#d62728"/>
-<circle cx="301.4" cy="182.0" r="3" fill="#d62728"/>
-<circle cx="340.0" cy="73.1" r="3" fill="#d62728"/>
-<circle cx="378.6" cy="142.9" r="3" fill="#d62728"/>
-<circle cx="417.1" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="455.7" cy="203.4" r="3" fill="#d62728"/>
-<circle cx="494.3" cy="70.4" r="3" fill="#d62728"/>
-<circle cx="532.9" cy="226.9" r="3" fill="#d62728"/>
-<circle cx="571.4" cy="185.2" r="3" fill="#d62728"/>
-<circle cx="610.0" cy="109.6" r="3" fill="#d62728"/>
-<circle cx="648.6" cy="181.0" r="3" fill="#d62728"/>
-<circle cx="687.1" cy="172.5" r="3" fill="#d62728"/>
-<circle cx="725.7" cy="183.3" r="3" fill="#d62728"/>
-<circle cx="764.3" cy="195.9" r="3" fill="#d62728"/>
-<circle cx="802.9" cy="176.4" r="3" fill="#d62728"/>
-<circle cx="841.4" cy="77.4" r="3" fill="#d62728"/>
-<circle cx="880.0" cy="186.8" r="3" fill="#d62728"/>
+<circle cx="106.8" cy="165.2" r="3" fill="#d62728"/>
+<circle cx="180.5" cy="125.1" r="3" fill="#d62728"/>
+<circle cx="217.3" cy="247.2" r="3" fill="#d62728"/>
+<circle cx="254.1" cy="65.6" r="3" fill="#d62728"/>
+<circle cx="290.9" cy="182.0" r="3" fill="#d62728"/>
+<circle cx="327.7" cy="73.1" r="3" fill="#d62728"/>
+<circle cx="364.5" cy="142.9" r="3" fill="#d62728"/>
+<circle cx="401.4" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="438.2" cy="203.4" r="3" fill="#d62728"/>
+<circle cx="475.0" cy="70.4" r="3" fill="#d62728"/>
+<circle cx="511.8" cy="226.9" r="3" fill="#d62728"/>
+<circle cx="548.6" cy="185.2" r="3" fill="#d62728"/>
+<circle cx="585.5" cy="109.6" r="3" fill="#d62728"/>
+<circle cx="622.3" cy="181.0" r="3" fill="#d62728"/>
+<circle cx="659.1" cy="172.5" r="3" fill="#d62728"/>
+<circle cx="695.9" cy="183.3" r="3" fill="#d62728"/>
+<circle cx="732.7" cy="195.9" r="3" fill="#d62728"/>
+<circle cx="769.5" cy="176.4" r="3" fill="#d62728"/>
+<circle cx="806.4" cy="77.4" r="3" fill="#d62728"/>
+<circle cx="843.2" cy="186.8" r="3" fill="#d62728"/>
+<circle cx="880.0" cy="142.9" r="3" fill="#d62728"/>
 <rect x="70.0" y="358" width="10" height="10" fill="#d62728"/>
 <text x="84.0" y="367" font-size="11" fill="#333">first audio (e2e)</text>
-<polyline points="417.1,144.3 571.4,117.7 610.0,159.4 648.6,81.0 687.1,230.8 725.7,184.4 764.3,257.0 802.9,192.6 841.4,219.0 880.0,195.4" fill="none" stroke="#1f77b4" stroke-width="2"/>
-<circle cx="417.1" cy="144.3" r="3" fill="#1f77b4"/>
-<circle cx="571.4" cy="117.7" r="3" fill="#1f77b4"/>
-<circle cx="610.0" cy="159.4" r="3" fill="#1f77b4"/>
-<circle cx="648.6" cy="81.0" r="3" fill="#1f77b4"/>
-<circle cx="687.1" cy="230.8" r="3" fill="#1f77b4"/>
-<circle cx="725.7" cy="184.4" r="3" fill="#1f77b4"/>
-<circle cx="764.3" cy="257.0" r="3" fill="#1f77b4"/>
-<circle cx="802.9" cy="192.6" r="3" fill="#1f77b4"/>
-<circle cx="841.4" cy="219.0" r="3" fill="#1f77b4"/>
-<circle cx="880.0" cy="195.4" r="3" fill="#1f77b4"/>
+<polyline points="401.4,144.3 548.6,117.7 585.5,159.4 622.3,81.0 659.1,230.8 695.9,184.4 732.7,257.0 769.5,192.6 806.4,219.0 843.2,195.4 880.0,194.5" fill="none" stroke="#1f77b4" stroke-width="2"/>
+<circle cx="401.4" cy="144.3" r="3" fill="#1f77b4"/>
+<circle cx="548.6" cy="117.7" r="3" fill="#1f77b4"/>
+<circle cx="585.5" cy="159.4" r="3" fill="#1f77b4"/>
+<circle cx="622.3" cy="81.0" r="3" fill="#1f77b4"/>
+<circle cx="659.1" cy="230.8" r="3" fill="#1f77b4"/>
+<circle cx="695.9" cy="184.4" r="3" fill="#1f77b4"/>
+<circle cx="732.7" cy="257.0" r="3" fill="#1f77b4"/>
+<circle cx="769.5" cy="192.6" r="3" fill="#1f77b4"/>
+<circle cx="806.4" cy="219.0" r="3" fill="#1f77b4"/>
+<circle cx="843.2" cy="195.4" r="3" fill="#1f77b4"/>
+<circle cx="880.0" cy="194.5" r="3" fill="#1f77b4"/>
 <rect x="205.0" y="358" width="10" height="10" fill="#1f77b4"/>
 <text x="219.0" y="367" font-size="11" fill="#333">tts first chunk</text>
-<polyline points="417.1,281.0 571.4,281.0 610.0,297.1 725.7,264.4 764.3,296.7 802.9,297.1 880.0,285.1" fill="none" stroke="#ff7f0e" stroke-width="2"/>
-<circle cx="417.1" cy="281.0" r="3" fill="#ff7f0e"/>
-<circle cx="571.4" cy="281.0" r="3" fill="#ff7f0e"/>
-<circle cx="610.0" cy="297.1" r="3" fill="#ff7f0e"/>
-<circle cx="725.7" cy="264.4" r="3" fill="#ff7f0e"/>
-<circle cx="764.3" cy="296.7" r="3" fill="#ff7f0e"/>
-<circle cx="802.9" cy="297.1" r="3" fill="#ff7f0e"/>
-<circle cx="880.0" cy="285.1" r="3" fill="#ff7f0e"/>
+<polyline points="401.4,281.0 548.6,281.0 585.5,297.1 695.9,264.4 732.7,296.7 769.5,297.1 843.2,285.1 880.0,281.6" fill="none" stroke="#ff7f0e" stroke-width="2"/>
+<circle cx="401.4" cy="281.0" r="3" fill="#ff7f0e"/>
+<circle cx="548.6" cy="281.0" r="3" fill="#ff7f0e"/>
+<circle cx="585.5" cy="297.1" r="3" fill="#ff7f0e"/>
+<circle cx="695.9" cy="264.4" r="3" fill="#ff7f0e"/>
+<circle cx="732.7" cy="296.7" r="3" fill="#ff7f0e"/>
+<circle cx="769.5" cy="297.1" r="3" fill="#ff7f0e"/>
+<circle cx="843.2" cy="285.1" r="3" fill="#ff7f0e"/>
+<circle cx="880.0" cy="281.6" r="3" fill="#ff7f0e"/>
 <rect x="340.0" y="358" width="10" height="10" fill="#ff7f0e"/>
 <text x="354.0" y="367" font-size="11" fill="#333">llm ttft</text>
-<polyline points="70.0,279.6 108.6,286.2 185.7,281.2 224.3,281.1 262.9,289.5 340.0,242.1 378.6,253.8 417.1,188.4 571.4,190.5 610.0,262.0 648.6,232.4 687.1,294.7 725.7,251.7 764.3,294.3 802.9,279.9 841.4,233.7 880.0,282.7" fill="none" stroke="#2ca02c" stroke-width="2"/>
+<polyline points="70.0,279.6 106.8,286.2 180.5,281.2 217.3,281.1 254.1,289.5 327.7,242.1 364.5,253.8 401.4,188.4 548.6,190.5 585.5,262.0 622.3,232.4 659.1,294.7 695.9,251.7 732.7,294.3 769.5,279.9 806.4,233.7 843.2,282.7 880.0,230.6" fill="none" stroke="#2ca02c" stroke-width="2"/>
 <circle cx="70.0" cy="279.6" r="3" fill="#2ca02c"/>
-<circle cx="108.6" cy="286.2" r="3" fill="#2ca02c"/>
-<circle cx="185.7" cy="281.2" r="3" fill="#2ca02c"/>
-<circle cx="224.3" cy="281.1" r="3" fill="#2ca02c"/>
-<circle cx="262.9" cy="289.5" r="3" fill="#2ca02c"/>
-<circle cx="340.0" cy="242.1" r="3" fill="#2ca02c"/>
-<circle cx="378.6" cy="253.8" r="3" fill="#2ca02c"/>
-<circle cx="417.1" cy="188.4" r="3" fill="#2ca02c"/>
-<circle cx="571.4" cy="190.5" r="3" fill="#2ca02c"/>
-<circle cx="610.0" cy="262.0" r="3" fill="#2ca02c"/>
-<circle cx="648.6" cy="232.4" r="3" fill="#2ca02c"/>
-<circle cx="687.1" cy="294.7" r="3" fill="#2ca02c"/>
-<circle cx="725.7" cy="251.7" r="3" fill="#2ca02c"/>
-<circle cx="764.3" cy="294.3" r="3" fill="#2ca02c"/>
-<circle cx="802.9" cy="279.9" r="3" fill="#2ca02c"/>
-<circle cx="841.4" cy="233.7" r="3" fill="#2ca02c"/>
-<circle cx="880.0" cy="282.7" r="3" fill="#2ca02c"/>
+<circle cx="106.8" cy="286.2" r="3" fill="#2ca02c"/>
+<circle cx="180.5" cy="281.2" r="3" fill="#2ca02c"/>
+<circle cx="217.3" cy="281.1" r="3" fill="#2ca02c"/>
+<circle cx="254.1" cy="289.5" r="3" fill="#2ca02c"/>
+<circle cx="327.7" cy="242.1" r="3" fill="#2ca02c"/>
+<circle cx="364.5" cy="253.8" r="3" fill="#2ca02c"/>
+<circle cx="401.4" cy="188.4" r="3" fill="#2ca02c"/>
+<circle cx="548.6" cy="190.5" r="3" fill="#2ca02c"/>
+<circle cx="585.5" cy="262.0" r="3" fill="#2ca02c"/>
+<circle cx="622.3" cy="232.4" r="3" fill="#2ca02c"/>
+<circle cx="659.1" cy="294.7" r="3" fill="#2ca02c"/>
+<circle cx="695.9" cy="251.7" r="3" fill="#2ca02c"/>
+<circle cx="732.7" cy="294.3" r="3" fill="#2ca02c"/>
+<circle cx="769.5" cy="279.9" r="3" fill="#2ca02c"/>
+<circle cx="806.4" cy="233.7" r="3" fill="#2ca02c"/>
+<circle cx="843.2" cy="282.7" r="3" fill="#2ca02c"/>
+<circle cx="880.0" cy="230.6" r="3" fill="#2ca02c"/>
 <rect x="475.0" y="358" width="10" height="10" fill="#2ca02c"/>
 <text x="489.0" y="367" font-size="11" fill="#333">llm first sentence</text>
-<polyline points="70.0,302.7 108.6,306.6 147.1,303.4 185.7,305.0 224.3,293.0 262.9,305.8 340.0,294.4 378.6,291.1 417.1,298.6 571.4,293.7 610.0,301.9 648.6,294.9 687.1,308.9 725.7,309.1 764.3,310.1 802.9,297.5 841.4,307.4 880.0,310.4" fill="none" stroke="#9467bd" stroke-width="2"/>
+<polyline points="70.0,302.7 106.8,306.6 143.6,303.4 180.5,305.0 217.3,293.0 254.1,305.8 327.7,294.4 364.5,291.1 401.4,298.6 548.6,293.7 585.5,301.9 622.3,294.9 659.1,308.9 695.9,309.1 732.7,310.1 769.5,297.5 806.4,307.4 843.2,310.4 880.0,305.4" fill="none" stroke="#9467bd" stroke-width="2"/>
 <circle cx="70.0" cy="302.7" r="3" fill="#9467bd"/>
-<circle cx="108.6" cy="306.6" r="3" fill="#9467bd"/>
-<circle cx="147.1" cy="303.4" r="3" fill="#9467bd"/>
-<circle cx="185.7" cy="305.0" r="3" fill="#9467bd"/>
-<circle cx="224.3" cy="293.0" r="3" fill="#9467bd"/>
-<circle cx="262.9" cy="305.8" r="3" fill="#9467bd"/>
-<circle cx="340.0" cy="294.4" r="3" fill="#9467bd"/>
-<circle cx="378.6" cy="291.1" r="3" fill="#9467bd"/>
-<circle cx="417.1" cy="298.6" r="3" fill="#9467bd"/>
-<circle cx="571.4" cy="293.7" r="3" fill="#9467bd"/>
-<circle cx="610.0" cy="301.9" r="3" fill="#9467bd"/>
-<circle cx="648.6" cy="294.9" r="3" fill="#9467bd"/>
-<circle cx="687.1" cy="308.9" r="3" fill="#9467bd"/>
-<circle cx="725.7" cy="309.1" r="3" fill="#9467bd"/>
-<circle cx="764.3" cy="310.1" r="3" fill="#9467bd"/>
-<circle cx="802.9" cy="297.5" r="3" fill="#9467bd"/>
-<circle cx="841.4" cy="307.4" r="3" fill="#9467bd"/>
-<circle cx="880.0" cy="310.4" r="3" fill="#9467bd"/>
+<circle cx="106.8" cy="306.6" r="3" fill="#9467bd"/>
+<circle cx="143.6" cy="303.4" r="3" fill="#9467bd"/>
+<circle cx="180.5" cy="305.0" r="3" fill="#9467bd"/>
+<circle cx="217.3" cy="293.0" r="3" fill="#9467bd"/>
+<circle cx="254.1" cy="305.8" r="3" fill="#9467bd"/>
+<circle cx="327.7" cy="294.4" r="3" fill="#9467bd"/>
+<circle cx="364.5" cy="291.1" r="3" fill="#9467bd"/>
+<circle cx="401.4" cy="298.6" r="3" fill="#9467bd"/>
+<circle cx="548.6" cy="293.7" r="3" fill="#9467bd"/>
+<circle cx="585.5" cy="301.9" r="3" fill="#9467bd"/>
+<circle cx="622.3" cy="294.9" r="3" fill="#9467bd"/>
+<circle cx="659.1" cy="308.9" r="3" fill="#9467bd"/>
+<circle cx="695.9" cy="309.1" r="3" fill="#9467bd"/>
+<circle cx="732.7" cy="310.1" r="3" fill="#9467bd"/>
+<circle cx="769.5" cy="297.5" r="3" fill="#9467bd"/>
+<circle cx="806.4" cy="307.4" r="3" fill="#9467bd"/>
+<circle cx="843.2" cy="310.4" r="3" fill="#9467bd"/>
+<circle cx="880.0" cy="305.4" r="3" fill="#9467bd"/>
 <rect x="610.0" y="358" width="10" height="10" fill="#9467bd"/>
 <text x="624.0" y="367" font-size="11" fill="#333">lipsync first mouth</text>
-<polyline points="417.1,314.9 571.4,308.6 610.0,314.2 648.6,314.0 687.1,315.4 725.7,304.9 764.3,315.4 802.9,308.3 841.4,315.6 880.0,315.2" fill="none" stroke="#8c564b" stroke-width="2"/>
-<circle cx="417.1" cy="314.9" r="3" fill="#8c564b"/>
-<circle cx="571.4" cy="308.6" r="3" fill="#8c564b"/>
-<circle cx="610.0" cy="314.2" r="3" fill="#8c564b"/>
-<circle cx="648.6" cy="314.0" r="3" fill="#8c564b"/>
-<circle cx="687.1" cy="315.4" r="3" fill="#8c564b"/>
-<circle cx="725.7" cy="304.9" r="3" fill="#8c564b"/>
-<circle cx="764.3" cy="315.4" r="3" fill="#8c564b"/>
-<circle cx="802.9" cy="308.3" r="3" fill="#8c564b"/>
-<circle cx="841.4" cy="315.6" r="3" fill="#8c564b"/>
-<circle cx="880.0" cy="315.2" r="3" fill="#8c564b"/>
+<polyline points="401.4,314.9 548.6,308.6 585.5,314.2 622.3,314.0 659.1,315.4 695.9,304.9 732.7,315.4 769.5,308.3 806.4,315.6 843.2,315.2 880.0,304.0" fill="none" stroke="#8c564b" stroke-width="2"/>
+<circle cx="401.4" cy="314.9" r="3" fill="#8c564b"/>
+<circle cx="548.6" cy="308.6" r="3" fill="#8c564b"/>
+<circle cx="585.5" cy="314.2" r="3" fill="#8c564b"/>
+<circle cx="622.3" cy="314.0" r="3" fill="#8c564b"/>
+<circle cx="659.1" cy="315.4" r="3" fill="#8c564b"/>
+<circle cx="695.9" cy="304.9" r="3" fill="#8c564b"/>
+<circle cx="732.7" cy="315.4" r="3" fill="#8c564b"/>
+<circle cx="769.5" cy="308.3" r="3" fill="#8c564b"/>
+<circle cx="806.4" cy="315.6" r="3" fill="#8c564b"/>
+<circle cx="843.2" cy="315.2" r="3" fill="#8c564b"/>
+<circle cx="880.0" cy="304.0" r="3" fill="#8c564b"/>
 <rect x="745.0" y="358" width="10" height="10" fill="#8c564b"/>
 <text x="759.0" y="367" font-size="11" fill="#333">render tick p95</text>
 </svg>
