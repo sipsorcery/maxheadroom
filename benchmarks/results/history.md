@@ -8,18 +8,20 @@ Generated from schema-v1 benchmark JSON. Latencies are p50 in milliseconds; lowe
 
 ## Latest finding
 
-The dominant measured stage is **TTS to first audio** at **7,517 ms p50**. 3/3 samples succeeded and the deployment recorded 0 restarts during the batch.
+The dominant measured stage is **TTS to first audio** at **4,408 ms p50**. 3/3 samples succeeded and the deployment recorded 0 restarts during the batch.
 
 ## Viewer latency and lip sync
 
 | run (UTC) | deployment | LLM model | revision | n | STT final | LLM first token | speech→audio | speech→mouth | server A/V offset | browser A/V offset | quality |
 |---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|
+| 2026-07-17 08:14 | codex | mistral-3-14B | [519c7c76](runs/20260717T081400Z-519c7c7-webrtc.json) | 3 | 1,689 | 2,141 | 6,681 | 10,317 | 293 | 379 | ⚠ provisional |
 | 2026-07-16 22:20 | codex | mistral-3-14B | [519c7c76](runs/20260716T222024Z-519c7c7-webrtc.json) | 3 | 1,538 | 1,822 | 9,479 | 12,783 | 420 | 1,082 | ⚠ provisional |
 
 ## Renderer health
 
 | run (UTC) | revision | Wav2Lip mean/frame | video encode mean/frame | effective FPS | dropped ticks | browser offset range |
 |---|---|---:|---:|---:|---:|---:|
+| 2026-07-17 08:14 | 519c7c76 | 75 | 5 | 17.2 | 182 | 298–8,175 |
 | 2026-07-16 22:20 | 519c7c76 | 75 | 5 | 16.9 | 263 | 350–4,124 |
 
 ## Metric definitions and quality
