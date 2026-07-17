@@ -11,6 +11,10 @@ public sealed class WebRtcBenchmarkSession
     private readonly object _sync = new();
     private BenchmarkTimeline _timeline = new();
     private IAvatarRenderBenchmarkSource? _renderer;
+    private long _receivedAudioFrames;
+    private long _receivedAudioSamples;
+    private double _receivedAudioSumSquares;
+    private int _receivedAudioPeak;
 
     public WebRtcBenchmarkSession(string id) => Id = id;
 
@@ -33,6 +37,10 @@ public sealed class WebRtcBenchmarkSession
         {
             _timeline = new BenchmarkTimeline(Id);
             IsArmed = true;
+            _receivedAudioFrames = 0;
+            _receivedAudioSamples = 0;
+            _receivedAudioSumSquares = 0;
+            _receivedAudioPeak = 0;
             _renderer?.ResetBenchmarkCounters();
         }
     }
@@ -53,6 +61,23 @@ public sealed class WebRtcBenchmarkSession
         }
     }
 
+    /// <summary>Records decoded microphone PCM at the WebRTC/STT boundary.</summary>
+    public void RecordReceivedAudio(short[] pcm)
+    {
+        if (pcm.Length == 0) return;
+        lock (_sync)
+        {
+            if (!IsArmed) return;
+            _receivedAudioFrames++;
+            _receivedAudioSamples += pcm.Length;
+            foreach (var sample in pcm)
+            {
+                _receivedAudioSumSquares += (double)sample * sample;
+                _receivedAudioPeak = Math.Max(_receivedAudioPeak, Math.Abs((int)sample));
+            }
+        }
+    }
+
     public object Snapshot()
     {
         lock (_sync)
@@ -62,6 +87,13 @@ public sealed class WebRtcBenchmarkSession
                 sessionId = Id,
                 armed = IsArmed,
                 events = _timeline.Snapshot(),
+                receivedAudio = new
+                {
+                    frames = _receivedAudioFrames,
+                    samples = _receivedAudioSamples,
+                    rms = _receivedAudioSamples == 0 ? 0 : Math.Sqrt(_receivedAudioSumSquares / _receivedAudioSamples),
+                    peak = _receivedAudioPeak,
+                },
                 renderer = _renderer?.GetBenchmarkSnapshot(),
             };
         }
