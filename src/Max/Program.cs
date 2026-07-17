@@ -253,7 +253,12 @@ class Program
             branch = Environment.GetEnvironmentVariable("GIT_BRANCH") ?? "unknown",
             sha = Environment.GetEnvironmentVariable("GIT_SHA") ?? "unknown",
             description = Environment.GetEnvironmentVariable("BUILD_DESCRIPTION") ?? "",
+            // llmModel stays at the top level too (kept for existing consumers - the web
+            // page badge, MaxBench's llm_model field); models carries the same value plus
+            // every other tweakable engine/voice, for the model-swap experiments starting
+            // soon and any future comparison across deployments.
             llmModel = DescribeLlmModel(),
+            models = DescribeModelConfig(),
         }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
@@ -963,6 +968,53 @@ class Program
         }
         var model = Environment.GetEnvironmentVariable("LLM_MODEL");
         return string.IsNullOrWhiteSpace(model) ? "not configured" : model;
+    }
+
+    /// <summary>
+    /// Every tweakable model/engine this instance is actually running, for /version and the
+    /// bench - so experiments swapping voices/TTS/STT engines (and any future comparisons across
+    /// deployments) are recorded automatically instead of needing a matching manual input
+    /// somewhere in CI. Mirrors CreateSpeaker/CreateRecognizer's own selection logic exactly, so
+    /// this can never drift from what a given request actually gets routed to.
+    /// </summary>
+    private static object DescribeModelConfig()
+    {
+        string ttsEngine, ttsVoice, sttEngine, sttModel;
+
+        if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
+        {
+            var kind = _elevenLabsStreaming ? "elevenlabs-streaming" : "elevenlabs";
+            ttsEngine = kind;
+            ttsVoice = _elevenLabsVoiceId;
+            sttEngine = kind;
+            sttModel = _elevenLabsStreaming ? _elevenLabsSttRealtimeModel : _elevenLabsSttModel;
+        }
+        else
+        {
+            ttsEngine = SherpaConfigured() ? "sherpa" : "none";
+            ttsVoice = SherpaConfigured() ? DirName(_sherpaModelDir) : null;
+            sttEngine = SherpaSpeechRecognizer.FilesPresent() ? "sherpa" : "none";
+            sttModel = SherpaSpeechRecognizer.FilesPresent() ? DirName(SherpaSpeechRecognizer.DefaultModelDir) : null;
+        }
+
+        var rendererKind = Environment.GetEnvironmentVariable("AVATAR_RENDERER");
+        if (string.IsNullOrWhiteSpace(rendererKind))
+        {
+            rendererKind = Wav2LipAvatarRenderer.FilesPresent() ? "wav2lip" : "cartoon";
+        }
+
+        return new
+        {
+            llmModel = DescribeLlmModel(),
+            ttsEngine,
+            ttsVoice,
+            sttEngine,
+            sttModel,
+            avatarRenderer = rendererKind,
+        };
+
+        static string DirName(string path) =>
+            string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));
     }
 
     /// <summary>True if any TTS engine is configured (ElevenLabs or sherpa-onnx).</summary>
