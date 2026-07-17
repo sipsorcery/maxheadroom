@@ -245,6 +245,8 @@ class Program
             branch = Environment.GetEnvironmentVariable("GIT_BRANCH") ?? "unknown",
             sha = Environment.GetEnvironmentVariable("GIT_SHA") ?? "unknown",
             description = Environment.GetEnvironmentVariable("BUILD_DESCRIPTION") ?? "",
+            llmModel = DescribeLlmModel(),
+            models = DescribeModelConfig(),
         }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
@@ -905,6 +907,19 @@ class Program
             Environment.GetEnvironmentVariable("LLM_API_KEY"));
     }
 
+    /// <summary>The LLM actually in play, for /version and the bench: the in-process GGUF
+    /// filename, the configured endpoint model, or "not configured" (prompt-echo fallback).</summary>
+    private static string DescribeLlmModel()
+    {
+        var gguf = Environment.GetEnvironmentVariable("LLM_GGUF");
+        if (!string.IsNullOrWhiteSpace(gguf) && File.Exists(gguf))
+        {
+            return $"local:{Path.GetFileName(gguf)}";
+        }
+        var model = Environment.GetEnvironmentVariable("LLM_MODEL");
+        return string.IsNullOrWhiteSpace(model) ? "not configured" : model;
+    }
+
     /// <summary>True if any TTS engine is configured (ElevenLabs or sherpa-onnx).</summary>
     private static bool TtsConfigured() =>
         !string.IsNullOrWhiteSpace(_elevenLabsKey) || SherpaConfigured();
@@ -912,6 +927,30 @@ class Program
     /// <summary>True if the in-process sherpa-onnx TTS is configured (a voice model directory).</summary>
     private static bool SherpaConfigured() =>
         !string.IsNullOrWhiteSpace(_sherpaModelDir) && Directory.Exists(_sherpaModelDir);
+
+    /// <summary>Every tweakable engine/voice the server is actually running, for /version and
+    /// the bench - mirrors CreateSpeaker/CreateRecognizer's own selection logic exactly.</summary>
+    private static object DescribeModelConfig()
+    {
+        string ttsEngine, ttsVoice, sttEngine, sttModel;
+        if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
+        {
+            var kind = _elevenLabsStreaming ? "elevenlabs-streaming" : "elevenlabs";
+            ttsEngine = kind; ttsVoice = _elevenLabsVoiceId;
+            sttEngine = kind; sttModel = _elevenLabsStreaming ? _elevenLabsSttRealtimeModel : _elevenLabsSttModel;
+        }
+        else
+        {
+            ttsEngine = SherpaConfigured() ? "sherpa" : "none";
+            ttsVoice = SherpaConfigured() ? DirName(_sherpaModelDir) : null;
+            sttEngine = SherpaSpeechRecognizer.FilesPresent() ? "sherpa" : "none";
+            sttModel = SherpaSpeechRecognizer.FilesPresent() ? DirName(SherpaSpeechRecognizer.DefaultModelDir) : null;
+        }
+        var rendererKind = Environment.GetEnvironmentVariable("AVATAR_RENDERER");
+        if (string.IsNullOrWhiteSpace(rendererKind)) { rendererKind = Wav2LipAvatarRenderer.FilesPresent() ? "wav2lip" : "cartoon"; }
+        return new { llmModel = DescribeLlmModel(), ttsEngine, ttsVoice, sttEngine, sttModel, avatarRenderer = rendererKind };
+        static string DirName(string path) => string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));
+    }
 
     [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
     private static extern uint TimeBeginPeriod(uint milliseconds);
