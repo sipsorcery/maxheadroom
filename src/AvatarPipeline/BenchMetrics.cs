@@ -30,11 +30,29 @@ public static class BenchMetrics
     private const int MaxEntries = 2000;
 
     private static readonly ConcurrentQueue<Entry> _entries = new();
+    private static Action<string> _benchmarkEventSink;
+
+    public static void SetBenchmarkEventSink(Action<string> sink) =>
+        System.Threading.Volatile.Write(ref _benchmarkEventSink, sink);
+
+    public static void ClearBenchmarkEventSink() =>
+        System.Threading.Volatile.Write(ref _benchmarkEventSink, null);
 
     /// <summary>Records one stage timing. Never throws; safe on hot paths.</summary>
     public static void Record(string name, double ms, string detail = null)
     {
         _entries.Enqueue(new Entry(name, ms, detail, DateTimeOffset.UtcNow));
+        var eventName = name switch
+        {
+            "llm_ttft" => "llm_first_token",
+            "tts_first_chunk" => "audio_started",
+            "lipsync_first_mouth" => "first_mouth_frame",
+            _ => null,
+        };
+        if (eventName != null)
+        {
+            System.Threading.Volatile.Read(ref _benchmarkEventSink)?.Invoke(eventName);
+        }
         // Approximate cap: concurrent enqueuers can overshoot by a few entries,
         // which is harmless for a diagnostics buffer.
         while (_entries.Count > MaxEntries && _entries.TryDequeue(out _)) { }
