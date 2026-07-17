@@ -48,8 +48,25 @@ if (mode == "history")
 var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
 var results = new JsonObject { ["target"] = target, ["utc"] = DateTime.UtcNow.ToString("o"), ["mode"] = mode };
 if (GetOpt("--label") is string label) { results["label"] = label; }
+
+// The LLM in play is config, not code - a model swap doesn't change the git sha, so
+// without this the history table can't tell two different models apart under the
+// same label. Best-effort: an old/unbadged instance just won't have the field.
+string llmModel = null;
+try
+{
+    var versionResp = await http.GetAsync($"{target}/version");
+    if (versionResp.IsSuccessStatusCode)
+    {
+        llmModel = JsonNode.Parse(await versionResp.Content.ReadAsStringAsync())?["llmModel"]?.GetValue<string>();
+        if (llmModel != null) { results["llm_model"] = llmModel; }
+    }
+}
+catch { /* best effort */ }
+
 var summary = new StringBuilder();
 summary.AppendLine($"# Max bench — {target}");
+if (llmModel != null) { summary.AppendLine($"LLM: `{llmModel}`"); }
 summary.AppendLine();
 
 // Fixed prompt set: stable across runs so latency numbers are comparable.
@@ -140,9 +157,13 @@ async Task RunAsk()
                 // Drain the utterance fully (wait for sustained silence) so the next prompt's
                 // first-audio can't latch onto this reply's tail and TTS/lip-sync timings
                 // attach to the right utterance. No audio at all -> nothing to drain.
+                // The quiet window must exceed the inter-sentence synthesis gap (tts_synth
+                // p95 ~4s): a shorter window mistakes "synthesising the next sentence" for
+                // end-of-reply and the viewer then disconnects mid-speech - which currently
+                // segfaults the server (see the teardown-race issue).
                 if (audioAt != null)
                 {
-                    await viewer.WaitForSilenceAsync(TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(90));
+                    await viewer.WaitForSilenceAsync(TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(120));
                 }
             }
             catch (Exception excp)
