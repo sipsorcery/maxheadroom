@@ -742,14 +742,36 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
         return SKMatrix.CreateTranslation((float)dx, (float)dy).PreConcat(m);
     }
 
-    /// <summary>0..1 lid closure; a ~200ms triangular blink at a pseudo-random point in each ~3.3s window.</summary>
+    /// <summary>
+    /// 0..1 lid closure.  Keep the close phase long enough to survive the renderer's
+    /// variable cadence: at the normal ~15 FPS output a blink should contain a clear
+    /// fully-closed frame, rather than occasionally appearing as a tiny upper-lid flop.
+    /// </summary>
     private static double BlinkAmount(double t)
     {
         const double period = 3.3;
         int k = (int)(t / period);
-        double start = ((uint)(k * 40503) & 0xFFFF) % 100 / 100.0 * (period - 0.3);
+        const double duration = 0.30;
+        const double ramp = 0.08;
+        const double hold = 0.14;
+        double start = ((uint)(k * 40503) & 0xFFFF) % 100 / 100.0 * (period - duration);
         double ph = t - k * period - start;
-        return ph >= 0 && ph < 0.20 ? 1.0 - Math.Abs(ph / 0.10 - 1.0) : 0.0;
+        if (ph < 0 || ph >= duration)
+        {
+            return 0.0;
+        }
+
+        if (ph < ramp)
+        {
+            return ph / ramp;
+        }
+
+        if (ph < ramp + hold)
+        {
+            return 1.0;
+        }
+
+        return 1.0 - (ph - ramp - hold) / ramp;
     }
 
     // --- Background (port of the sidecar's isometric room-corner louvres) -----------------
