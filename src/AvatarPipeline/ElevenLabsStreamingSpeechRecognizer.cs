@@ -59,6 +59,7 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
     private Task _receiver;
     private bool _started;
     private bool _disposed;
+    private int _otherMessages;
 
     public event Action<string> OnRecognized;
 
@@ -181,6 +182,19 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
                 else if (type is "error" or "auth_error" or "quota_exceeded")
                 {
                     logger.LogError("ElevenLabs STT error: {Message}", message);
+                }
+                else if (type == "session_started")
+                {
+                    logger.LogInformation("ElevenLabs STT session: {Message}", message);
+                }
+                else
+                {
+                    // partial_transcript and anything unexpected: visibility for diagnosing
+                    // "connected but silent" failures without flooding the log per chunk.
+                    if (++_otherMessages <= 10 || _otherMessages % 50 == 0)
+                    {
+                        logger.LogDebug("ElevenLabs STT message {Type}: {Message}", type, message);
+                    }
                 }
             }
         }
