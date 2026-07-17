@@ -17,6 +17,7 @@ const recordingPath = option("recording", "artifacts/webrtc-lipsync/diagnostic.w
 const timeoutMs = Number(option("timeout-ms", "45000"));
 const trailingSilenceMs = Number(option("trailing-silence-ms", "600"));
 const browserChannel = option("browser-channel", "chrome");
+const commitSha = option("commit-sha", process.env.GITHUB_SHA);
 
 if (!audioPath) {
   throw new Error("Pass --audio <wav-or-flac> containing deterministic speech followed by silence.");
@@ -239,7 +240,7 @@ const result = {
   schemaVersion: 1,
   runId: observation.sessionId,
   startedAtUtc: new Date().toISOString(),
-  source: { ...(process.env.GITHUB_SHA ? { commitSha: process.env.GITHUB_SHA } : {}) },
+  source: { ...(commitSha ? { commitSha } : {}) },
   environment: {
     machineName: os.hostname(),
     operatingSystem: `${os.type()} ${os.release()}`,

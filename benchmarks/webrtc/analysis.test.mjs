@@ -24,19 +24,24 @@ test("reports signed received mouth to audio offset", () => {
     speechEndMs: 100,
     audioSamples: [100, 110, 120].map(timeMs => ({ timeMs, value: 0.1 })),
     mouthSamples: [100, 110].map(timeMs => ({ timeMs, value: 10 })),
-    server: { events: [
-      { name: "speech_end", elapsedMilliseconds: 20 },
-      { name: "stt_final", elapsedMilliseconds: 30 },
-      { name: "llm_first_token", elapsedMilliseconds: 40 },
-      { name: "audio_started", elapsedMilliseconds: 50 },
-      { name: "audio_complete", elapsedMilliseconds: 80 },
-      { name: "first_mouth_frame", elapsedMilliseconds: 55 },
-    ] },
+    server: {
+      events: [
+        { name: "speech_end", elapsedMilliseconds: 20 },
+        { name: "stt_final", elapsedMilliseconds: 30 },
+        { name: "llm_first_token", elapsedMilliseconds: 40 },
+        { name: "audio_started", elapsedMilliseconds: 50 },
+        { name: "audio_complete", elapsedMilliseconds: 80 },
+        { name: "first_mouth_frame", elapsedMilliseconds: 55 },
+      ],
+      receivedAudio: { frames: 192, samples: 30720, rms: 4200, peak: 15000 },
+    },
   };
   const result = buildCase(observation);
   assert.equal(result.succeeded, true);
   assert.equal(result.metrics.received_mouth_minus_audio_ms, 0);
   assert.equal(result.metricsMilliseconds.server_speech_end_to_stt_final_ms, 10);
+  assert.deepEqual(result.serverReceivedAudio, { frames: 192, samples: 30720, rms: 4200, peak: 15000 });
+  assert.equal(result.metrics.server_received_audio_rms, 4200);
 });
 
 test("summarizes interpolated percentiles", () => {

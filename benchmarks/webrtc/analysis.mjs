@@ -80,6 +80,13 @@ export function buildCase(observation, options = {}) {
     metrics.browser_candidate_pair_packets_sent = media.candidatePairPacketsSent;
     metrics.browser_candidate_pair_packets_received = media.candidatePairPacketsReceived;
   }
+  const receivedAudio = observation.server?.receivedAudio;
+  if (receivedAudio) {
+    metrics.server_received_audio_frames = receivedAudio.frames ?? 0;
+    metrics.server_received_audio_samples = receivedAudio.samples ?? 0;
+    metrics.server_received_audio_rms = receivedAudio.rms ?? 0;
+    metrics.server_received_audio_peak = receivedAudio.peak ?? 0;
+  }
 
   const required = ["stt_final", "llm_first_token", "audio_started", "audio_complete", "first_mouth_frame"];
   const missing = required.filter(name => !events.some(x => x.name === name));
@@ -95,6 +102,7 @@ export function buildCase(observation, options = {}) {
     metricsMilliseconds,
     metrics,
     events,
+    ...(receivedAudio ? { serverReceivedAudio: receivedAudio } : {}),
     ...(media ? { mediaStats: media } : {}),
     ...(missing.length ? { error: `Missing: ${missing.join(", ")}` } : {}),
   };
