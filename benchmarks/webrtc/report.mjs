@@ -331,9 +331,15 @@ async function main() {
     deploymentRestarts: one("deployment-restarts") ?? null,
   });
   await mkdir(path.dirname(runOut), { recursive: true });
-  await writeFile(runOut, `${JSON.stringify(combined, null, 2)}\n`);
+  const serialized = `${JSON.stringify(combined, null, 2)}\n`;
+  await writeFile(runOut, serialized);
 
   const runsDir = path.join(historyDir, "runs");
+  await mkdir(runsDir, { recursive: true });
+  const historyRunOut = path.join(runsDir, path.basename(runOut));
+  if (path.resolve(historyRunOut) !== path.resolve(runOut)) {
+    await writeFile(historyRunOut, serialized);
+  }
   const files = (await readdir(runsDir)).filter(name => name.endsWith(".json"));
   const runs = await Promise.all(files.map(async name =>
     describeResult(JSON.parse(await readFile(path.join(runsDir, name), "utf8")), name)));
