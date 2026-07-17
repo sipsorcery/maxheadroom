@@ -81,3 +81,31 @@ before VAD produces its final transcript.
 
 Results are schema-v1 JSON. A failed run also retains a short WebM diagnostic
 recording; successful runs discard it.
+
+### Durable WebRTC results
+
+See the [current WebRTC benchmark history](results/history.md).
+
+Combine repeated samples and regenerate the repository history with:
+
+```bash
+node benchmarks/webrtc/report.mjs \
+  --input artifacts/webrtc-lipsync/result-1.json \
+  --input artifacts/webrtc-lipsync/result-2.json \
+  --input artifacts/webrtc-lipsync/result-3.json \
+  --run-out benchmarks/results/runs/20260716T222024Z-519c7c7-webrtc.json \
+  --history-dir benchmarks/results \
+  --run-id webrtc-519c7c7-20260716 \
+  --commit-sha 519c7c76143fa315e1dc3361a0d7a406cd79da49 \
+  --image-digest sha256:3a19fcb24629b00c5333bf861c980a4379e59349219f116dca8056a924633fa8 \
+  --target https://max-codex.sipsorcery.com \
+  --deployment codex \
+  --runner local-codex-windows \
+  --llm-model mistral-3-14B \
+  --deployment-restarts 0
+```
+
+The generated `benchmarks/results/history.md` follows the repository's
+`bench-data` table-and-SVG convention. It also decomposes the latest pipeline
+into non-overlapping stages and marks noisy browser mouth-motion samples as
+provisional rather than presenting them as precise lip-sync measurements.

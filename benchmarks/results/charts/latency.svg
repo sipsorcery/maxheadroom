@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="360" viewBox="0 0 900 360" font-family="sans-serif">
+<rect width="100%" height="100%" fill="white"/>
+<text x="70" y="24" font-size="17" fill="#222">WebRTC latency history — p50 ms, lower is better</text>
+<line x1="70" y1="290.0" x2="870" y2="290.0" stroke="#e5e5e5"/>
+<text x="62" y="294.0" text-anchor="end" font-size="11" fill="#666">0</text>
+<line x1="70" y1="241.0" x2="870" y2="241.0" stroke="#e5e5e5"/>
+<text x="62" y="245.0" text-anchor="end" font-size="11" fill="#666">2,047</text>
+<line x1="70" y1="192.0" x2="870" y2="192.0" stroke="#e5e5e5"/>
+<text x="62" y="196.0" text-anchor="end" font-size="11" fill="#666">4,095</text>
+<line x1="70" y1="143.0" x2="870" y2="143.0" stroke="#e5e5e5"/>
+<text x="62" y="147.0" text-anchor="end" font-size="11" fill="#666">6,142</text>
+<line x1="70" y1="94.0" x2="870" y2="94.0" stroke="#e5e5e5"/>
+<text x="62" y="98.0" text-anchor="end" font-size="11" fill="#666">8,190</text>
+<line x1="70" y1="45.0" x2="870" y2="45.0" stroke="#e5e5e5"/>
+<text x="62" y="49.0" text-anchor="end" font-size="11" fill="#666">10,237</text>
+<polyline points="470.0,63.1" fill="none" stroke="#e15759" stroke-width="2"/>
+<circle cx="470.0" cy="63.1" r="4" fill="#e15759"/>
+<rect x="70" y="326" width="11" height="11" fill="#e15759"/>
+<text x="86" y="336" font-size="11" fill="#333">first audio (e2e)</text>
+<polyline points="470.0,246.4" fill="none" stroke="#59a14f" stroke-width="2"/>
+<circle cx="470.0" cy="246.4" r="4" fill="#59a14f"/>
+<rect x="290" y="326" width="11" height="11" fill="#59a14f"/>
+<text x="306" y="336" font-size="11" fill="#333">LLM first token</text>
+<polyline points="470.0,280.0" fill="none" stroke="#b279a2" stroke-width="2"/>
+<circle cx="470.0" cy="280.0" r="4" fill="#b279a2"/>
+<rect x="510" y="326" width="11" height="11" fill="#b279a2"/>
+<text x="526" y="336" font-size="11" fill="#333">server A/V offset</text>
+<text x="470.0" y="308" text-anchor="middle" font-size="10" fill="#666">519c7c76</text>
+</svg>

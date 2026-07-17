@@ -214,7 +214,7 @@ const result = {
     machineName: os.hostname(),
     operatingSystem: `${os.type()} ${os.release()}`,
     processArchitecture: process.arch,
-    framework: `Node ${process.version}; Playwright Chromium`,
+    framework: `Node ${process.version}; Playwright ${browserChannel}`,
     processorCount: os.cpus().length,
   },
   configuration: {
