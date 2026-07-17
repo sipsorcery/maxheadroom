@@ -51,6 +51,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -82,6 +83,14 @@ class Program
     private static ISpeechRecognizer _recognizer;
     private static ILlmClient _llm;
     private static OpenAiRealtimeSession _openAiRealtimeSession;
+
+    // Barge-in: monotonic "current turn" counter. Every new thing to say (a typed /ask,
+    // a /say, or a recognised utterance) starts a turn, which immediately hard-stops
+    // whatever audio is currently playing and supersedes any in-flight reply - without
+    // this, the STT VAD segmenting a user's short backchannel words ("Yeah.", "Okay.")
+    // while Max is still mid-reply spawned independent, uncoordinated LLM+speech turns
+    // that interleaved on the shared audio track (issue #27).
+    private static int _turnVersion;
 
     private static string _sherpaModelDir;
     private static string _elevenLabsKey;
@@ -281,6 +290,7 @@ class Program
             }
             else
             {
+                BeginTurn();
                 _ = _speaker.SpeakAsync(text);
             }
             return Results.Ok();
@@ -348,6 +358,25 @@ class Program
     }
 
     /// <summary>
+    /// Starts a new turn: bumps the turn counter (so any in-flight reply's queued/streaming
+    /// speech becomes stale and self-abandons - see <see cref="IsCurrentTurn"/>) and hard-stops
+    /// whatever audio is currently playing via <see cref="AudioExtrasSource.CancelSendAudioFromStream"/>,
+    /// which resolves the in-flight <c>SpeakAsync</c> call immediately (it no-ops harmlessly when
+    /// nothing is playing). The result is a barge-in: the newest thing to say always wins,
+    /// audibly, right away, instead of interleaving with whatever was already talking.
+    /// </summary>
+    private static int BeginTurn()
+    {
+        int turn = Interlocked.Increment(ref _turnVersion);
+        _audioSource?.CancelSendAudioFromStream();
+        return turn;
+    }
+
+    /// <summary>True while <paramref name="turn"/> (from <see cref="BeginTurn"/>) is still the
+    /// newest turn - false once a later call to <see cref="BeginTurn"/> has superseded it.</summary>
+    private static bool IsCurrentTurn(int turn) => Volatile.Read(ref _turnVersion) == turn;
+
+    /// <summary>
     /// Runs a prompt through the LLM and speaks the reply, streaming sentence-by-sentence so the
     /// avatar starts talking on the first sentence instead of waiting for the whole completion. A
     /// single background consumer speaks the sentences in order (the speaker also serialises
@@ -373,6 +402,7 @@ class Program
             return string.Empty;
         }
 
+        int myTurn = BeginTurn();
         var askClock = System.Diagnostics.Stopwatch.StartNew();
 
         // A streaming speaker consumes the LLM token stream directly over one WebSocket; tee the
@@ -384,6 +414,10 @@ class Program
             {
                 await foreach (var sentence in _llm.StreamReplyAsync(prompt))
                 {
+                    // A newer turn has started (barge-in) - stop generating/yielding for this
+                    // one instead of racing its speech against the new turn's.
+                    if (!IsCurrentTurn(myTurn)) { yield break; }
+
                     if (streamed.Length == 0)
                     {
                         BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
@@ -409,6 +443,10 @@ class Program
             {
                 await foreach (var sentence in sentences.Reader.ReadAllAsync())
                 {
+                    // A newer turn has started (barge-in) - drop this stale sentence instead
+                    // of speaking it. Keep draining rather than stopping outright so the
+                    // channel (and its writer above) can still complete normally.
+                    if (!IsCurrentTurn(myTurn)) { continue; }
                     await speaker.SpeakAsync(sentence);
                 }
             }
@@ -421,6 +459,10 @@ class Program
         var reply = new StringBuilder();
         await foreach (var sentence in _llm.StreamReplyAsync(prompt))
         {
+            // Stop generating/enqueuing for a superseded turn - no point paying for more
+            // completion tokens nobody will ever hear.
+            if (!IsCurrentTurn(myTurn)) { break; }
+
             if (reply.Length == 0)
             {
                 BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
