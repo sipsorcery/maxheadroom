@@ -69,6 +69,7 @@ class Program
 {
     private static Microsoft.Extensions.Logging.ILogger _logger = NullLogger.Instance;
     private static readonly ConcurrentDictionary<Guid, Channel<string>> _uiEventClients = new();
+    private static readonly ConcurrentDictionary<string, WebRtcBenchmarkSession> _webRtcBenchmarkSessions = new(StringComparer.Ordinal);
 
     /// <summary>Process-lifetime recognizer for /bench/stt; never disposed (see endpoint note).</summary>
     private static readonly Lazy<SherpaSpeechRecognizer> _benchRecognizer =
@@ -279,7 +280,7 @@ class Program
 
         // Bench endpoints are opt-in (BENCH_ENDPOINTS=true) so production deployments
         // don't expose internals; the claude bench instance enables them via config.
-        if (string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase))
+        if (BenchmarkEndpointEnabled())
         {
             app.MapGet("/bench/metrics", () => Results.Json(new
             {
@@ -323,6 +324,39 @@ class Program
                     audioMs = pcm8k.Length / 8,
                 });
             });
+
+            app.MapPost("/benchmark/webrtc/session", () =>
+            {
+                var id = Guid.NewGuid().ToString("N");
+                _webRtcBenchmarkSessions[id] = new WebRtcBenchmarkSession(id);
+                return Results.Json(new { sessionId = id });
+            });
+
+            app.MapPost("/benchmark/webrtc/{id}/start", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryGetValue(id, out var session)) return Results.NotFound();
+                session.Arm();
+                return Results.Ok();
+            });
+
+            app.MapPost("/benchmark/webrtc/{id}/speech-end", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryGetValue(id, out var session)) return Results.NotFound();
+                session.Record("speech_end");
+                return Results.Ok();
+            });
+
+            app.MapGet("/benchmark/webrtc/{id}", (string id) =>
+                _webRtcBenchmarkSessions.TryGetValue(id, out var session)
+                    ? Results.Json(session.Snapshot())
+                    : Results.NotFound());
+
+            app.MapDelete("/benchmark/webrtc/{id}", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryRemove(id, out _)) return Results.NotFound();
+                BenchMetrics.ClearBenchmarkEventSink();
+                return Results.NoContent();
+            });
         }
 
         await app.RunAsync();
@@ -355,7 +389,7 @@ class Program
     /// finishes in the background. Shared by the /ask endpoint and the speech recogniser, so typing
     /// a prompt and speaking one drive the exact same path.
     /// </summary>
-    private static async Task<string> AskAsync(string prompt)
+    private static async Task<string> AskAsync(string prompt, WebRtcBenchmarkSession benchmarkSession = null)
     {
         // Capture the speaker so a mid-stream disconnect (which nulls _speaker) can't throw inside
         // the background consumer below; bail quietly if the avatar can't speak right now.
@@ -384,6 +418,7 @@ class Program
                     if (streamed.Length == 0)
                     {
                         BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                        benchmarkSession?.Record("llm_first_token");
                     }
                     streamed.Append(sentence).Append(' ');
                     // Speak sanitized text (no markdown for the TTS to verbalise); keep the
@@ -394,6 +429,7 @@ class Program
             }
 
             await streaming.SpeakStreamAsync(Tee());
+            benchmarkSession?.Record("audio_complete");
             var streamedText = streamed.ToString().Trim();
             _logger.LogInformation("LLM reply: {Reply}", streamedText);
             return streamedText;
@@ -429,6 +465,7 @@ class Program
             if (reply.Length == 0)
             {
                 BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                benchmarkSession?.Record("llm_first_token");
             }
             reply.Append(sentence).Append(' ');
             // Speak sanitized text; keep the raw reply for the return value / speech log.
@@ -436,6 +473,12 @@ class Program
         }
         sentences.Writer.Complete();
         BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
+
+        if (benchmarkSession != null)
+        {
+            await speakTask.ConfigureAwait(false);
+            benchmarkSession.Record("audio_complete");
+        }
 
         var text = reply.ToString().Trim();
         _logger.LogInformation("LLM reply: {Reply}", text);
@@ -446,12 +489,13 @@ class Program
     /// Handles microphone input separately from typed /ask requests so the browser activity
     /// drawer can show the STT result followed by the reply generated for that utterance.
     /// </summary>
-    private static async Task HandleRecognizedSpeechAsync(string text)
+    private static async Task HandleRecognizedSpeechAsync(string text, WebRtcBenchmarkSession benchmarkSession = null)
     {
+        benchmarkSession?.Record("stt_final");
         PublishUiEvent("stt", text);
         try
         {
-            var reply = await AskAsync(text);
+            var reply = await AskAsync(text, benchmarkSession);
             if (!string.IsNullOrWhiteSpace(reply))
             {
                 PublishUiEvent("llm", reply);
@@ -515,7 +559,14 @@ class Program
         var sdpOffer = await ReadBody(request);
         _logger.LogDebug("Received SDP offer:\n{offer}", sdpOffer);
 
-        var pc = CreatePeerConnection();
+        WebRtcBenchmarkSession benchmarkSession = null;
+        if (BenchmarkEndpointEnabled() &&
+            request.Headers.TryGetValue("X-Max-Benchmark-Session", out var benchmarkIds))
+        {
+            _webRtcBenchmarkSessions.TryGetValue(benchmarkIds.ToString(), out benchmarkSession);
+        }
+
+        var pc = CreatePeerConnection(benchmarkSession);
 
         var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdpOffer, type = RTCSdpType.offer });
         if (result != SetDescriptionResultEnum.OK)
@@ -531,7 +582,7 @@ class Program
         return Results.Text(pc.localDescription.sdp.ToString());
     }
 
-    private static RTCPeerConnection CreatePeerConnection()
+    private static RTCPeerConnection CreatePeerConnection(WebRtcBenchmarkSession benchmarkSession = null)
     {
         var config = new RTCConfiguration
         {
@@ -547,6 +598,7 @@ class Program
         var pc = new RTCPeerConnection(config);
 
         IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder());
+        benchmarkSession?.Attach(videoSource);
         var videoTrack = new MediaStreamTrack(videoSource.GetVideoSourceFormats(), MediaStreamStatusEnum.SendOnly);
         pc.addTrack(videoTrack);
         videoSource.OnVideoSourceEncodedSample += pc.SendVideo;
@@ -576,7 +628,7 @@ class Program
             recognizer = CreateRecognizer();
             if (recognizer != null)
             {
-                recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text);
+                recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text, benchmarkSession);
 
                 var micDecoder = new AudioEncoder();
                 var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);
@@ -584,7 +636,9 @@ class Program
                 {
                     try
                     {
-                        recognizer.Write(micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat));
+                        var pcm = micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat);
+                        benchmarkSession?.RecordReceivedAudio(pcm);
+                        recognizer.Write(pcm);
                     }
                     catch (Exception excp)
                     {
@@ -613,7 +667,10 @@ class Program
                         await videoSource.StartVideo();
                         if (speaker != null)
                         {
-                            _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            if (benchmarkSession == null)
+                            {
+                                _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            }
                         }
                         else
                         {
@@ -665,6 +722,10 @@ class Program
         }
         return null;
     }
+
+    private static bool BenchmarkEndpointEnabled() =>
+        string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Environment.GetEnvironmentVariable("BENCHMARK_ENDPOINT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Builds the avatar renderer (the swappable IAvatarRenderer): the in-process Wav2Lip head
