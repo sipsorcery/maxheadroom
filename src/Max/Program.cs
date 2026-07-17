@@ -72,6 +72,8 @@ class Program
     private static Microsoft.Extensions.Logging.ILogger _logger = NullLogger.Instance;
     private static readonly ConcurrentDictionary<Guid, Channel<string>> _uiEventClients = new();
     private static readonly ConcurrentDictionary<string, WebRtcBenchmarkSession> _webRtcBenchmarkSessions = new(StringComparer.Ordinal);
+    private static readonly Lazy<SherpaSpeechRecognizer> _benchRecognizer =
+        new(() => new SherpaSpeechRecognizer(), System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
 
     // The demo drives a single connected viewer.
     private static IAvatarRenderer _videoSource;
@@ -268,6 +270,49 @@ class Program
 
         if (BenchmarkEndpointEnabled())
         {
+            app.MapGet("/bench/metrics", () => Results.Json(new
+            {
+                aggregates = BenchMetrics.Aggregates(),
+                events = BenchMetrics.Snapshot(),
+            }));
+
+            app.MapPost("/bench/reset", () =>
+            {
+                BenchMetrics.Reset();
+                return Results.Ok();
+            });
+
+            app.MapPost("/bench/stt", async (HttpRequest request) =>
+            {
+                if (!SherpaSpeechRecognizer.FilesPresent())
+                {
+                    return Results.Problem("STT model files not present.", statusCode: 503);
+                }
+
+                using var stream = new MemoryStream();
+                await request.Body.CopyToAsync(stream);
+                short[] pcm8k;
+                try
+                {
+                    pcm8k = WavUtils.ReadMono8k(stream.ToArray());
+                }
+                catch (Exception excp)
+                {
+                    return Results.BadRequest($"Unsupported WAV: {excp.Message}");
+                }
+
+                var clock = System.Diagnostics.Stopwatch.StartNew();
+                var transcript = await _benchRecognizer.Value.TestTranscribeAsync(pcm8k);
+                BenchMetrics.Record("stt_latency", clock.Elapsed.TotalMilliseconds,
+                    $"audioMs={pcm8k.Length / 8}");
+                return Results.Json(new
+                {
+                    transcript,
+                    ms = Math.Round(clock.Elapsed.TotalMilliseconds, 1),
+                    audioMs = pcm8k.Length / 8,
+                });
+            });
+
             app.MapPost("/benchmark/llm", async () =>
             {
                 var notReady = SpeakerNotReady();
@@ -307,9 +352,11 @@ class Program
                     : Results.NotFound());
 
             app.MapDelete("/benchmark/webrtc/{id}", (string id) =>
-                _webRtcBenchmarkSessions.TryRemove(id, out _)
-                    ? Results.NoContent()
-                    : Results.NotFound());
+            {
+                if (!_webRtcBenchmarkSessions.TryRemove(id, out _)) return Results.NotFound();
+                BenchMetrics.ClearBenchmarkEventSink();
+                return Results.NoContent();
+            });
         }
 
         await app.RunAsync();
@@ -336,6 +383,8 @@ class Program
         }
 
         timeline?.RecordOnce(BenchmarkEventNames.PromptAccepted);
+        var askClock = System.Diagnostics.Stopwatch.StartNew();
+        var firstSentenceRecorded = false;
 
         // A streaming speaker consumes the LLM token stream directly over one WebSocket; tee the
         // sentences into a builder so we can still return the assembled reply text.
@@ -346,9 +395,15 @@ class Program
             {
                 await foreach (var sentence in _llm.StreamReplyAsync(prompt, timeline))
                 {
+                    if (!firstSentenceRecorded)
+                    {
+                        BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                        firstSentenceRecorded = true;
+                    }
                     streamed.Append(sentence).Append(' ');
                     yield return sentence;
                 }
+                BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
             }
 
             await streaming.SpeakStreamAsync(Tee(), timeline);
@@ -377,9 +432,15 @@ class Program
         var reply = new StringBuilder();
         await foreach (var sentence in _llm.StreamReplyAsync(prompt, timeline))
         {
+            if (!firstSentenceRecorded)
+            {
+                BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                firstSentenceRecorded = true;
+            }
             reply.Append(sentence).Append(' ');
             await sentences.Writer.WriteAsync(sentence);
         }
+        BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
         sentences.Writer.Complete();
 
         // The normal /ask path returns as soon as LLM generation completes, but a benchmark
@@ -635,7 +696,8 @@ class Program
     }
 
     private static bool BenchmarkEndpointEnabled() =>
-        string.Equals(Environment.GetEnvironmentVariable("BENCHMARK_ENDPOINT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
+        string.Equals(Environment.GetEnvironmentVariable("BENCHMARK_ENDPOINT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Builds the avatar renderer (the swappable IAvatarRenderer): the in-process Wav2Lip head
