@@ -4,6 +4,33 @@
 name: bench
 
 on:
+  workflow_call:
+    inputs:
+      target:
+        description: Base URL of the HTTP/API bench instance
+        required: false
+        type: string
+        default: https://max-claude.sipsorcery.com
+      iterations:
+        description: Number of HTTP /ask prompts
+        required: false
+        type: string
+        default: "5"
+      webrtc_target:
+        description: Base URL of the browser/WebRTC bench instance
+        required: false
+        type: string
+        default: https://max-codex.sipsorcery.com
+      webrtc_iterations:
+        description: Number of deterministic WebRTC speech transitions
+        required: false
+        type: string
+        default: "3"
+      webrtc_llm_model:
+        description: LLM model name configured on the WebRTC target
+        required: false
+        type: string
+        default: mistral-3-14B
   workflow_dispatch:
     inputs:
       target:
@@ -21,12 +48,6 @@ on:
       webrtc_llm_model:
         description: LLM model name configured on the WebRTC target
         default: mistral-3-14B
-  schedule:
-    - cron: "17 3 * * *"
-  push:
-    branches:
-      - "claude/**"
-      - "codex/**"
 
 permissions:
   contents: write
