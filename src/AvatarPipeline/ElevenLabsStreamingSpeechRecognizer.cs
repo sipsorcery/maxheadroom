@@ -49,6 +49,7 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
     private readonly string _apiKey;
     private readonly string _modelId;
     private readonly string _commitStrategy;
+    private readonly string _vadSilenceThresholdSecs;
 
     private readonly Channel<short[]> _audioQueue = Channel.CreateUnbounded<short[]>(
         new UnboundedChannelOptions { SingleReader = true });
@@ -75,6 +76,18 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
         _commitStrategy = string.IsNullOrWhiteSpace(commitStrategy) ? "vad" : commitStrategy;
         _sampleRate = sampleRate;
         _sendBatchSamples = sampleRate / 10;
+
+        // Server-side VAD silence window before it commits an utterance. The API default
+        // (1.5s) is far longer than the trailing silence a WebRTC mic actually streams
+        // after speech (Chrome stops/cuts RTP on the silent tail), so without this the
+        // commit never arrives. ELEVENLABS_STT_VAD_SILENCE_SECS overrides; keep it below
+        // the ~600ms of trailing silence the bench streams.
+        _vadSilenceThresholdSecs =
+            double.TryParse(Environment.GetEnvironmentVariable("ELEVENLABS_STT_VAD_SILENCE_SECS"),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var secs) && secs >= 0.1 && secs <= 2.0
+                ? secs.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                : "0.5";
     }
 
     public async Task StartAsync()
@@ -89,7 +102,8 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
         _ws.Options.SetRequestHeader("xi-api-key", _apiKey);
 
         var uri = new Uri($"wss://api.elevenlabs.io/v1/speech-to-text/realtime" +
-                          $"?model_id={_modelId}&audio_format=pcm_{_sampleRate}&commit_strategy={_commitStrategy}");
+                          $"?model_id={_modelId}&audio_format=pcm_{_sampleRate}&commit_strategy={_commitStrategy}" +
+                          $"&vad_silence_threshold_secs={_vadSilenceThresholdSecs}");
         await _ws.ConnectAsync(uri, _cts.Token).ConfigureAwait(false);
 
         _sender = Task.Run(SendLoopAsync);
