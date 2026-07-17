@@ -68,17 +68,32 @@ public static class LlmShared
         return text;
     }
 
+    /// <summary>Below this many characters, a clause boundary is not taken as a split
+    /// point - avoids handing the speaker fragments like "Well," on their own, which
+    /// sound choppy and pay a full utterance's synthesis/renderer overhead for one word.</summary>
+    private const int MinClauseChars = 20;
+
     /// <summary>
-    /// Removes and returns the first complete sentence (up to and including a '.', '!',
-    /// '?' or newline) from <paramref name="buffer"/>. Returns null when there is no
-    /// sentence terminator yet, or an empty string when the removed span was blank.
+    /// Removes and returns the first complete chunk from <paramref name="buffer"/>: a full
+    /// sentence (up to and including a '.', '!', '?' or newline, always split immediately),
+    /// or - once at least <see cref="MinClauseChars"/> have accumulated - a clause (up to a
+    /// ',', ';', ':' or em dash '—'). Splitting on clauses lets the avatar start speaking the
+    /// first phrase of a reply instead of waiting for the whole first sentence to finish
+    /// generating, which the bench measured as ~1.5s of the reply's time-to-first-audio.
+    /// Plain hyphens are deliberately excluded: the persona's stutter ("s-s-suppose") uses
+    /// them mid-word, not as a clause separator.
+    /// Returns null when there is no split point yet, or an empty string when the removed
+    /// span was blank.
     /// </summary>
     public static string TakeSentence(System.Text.StringBuilder buffer)
     {
         for (int i = 0; i < buffer.Length; i++)
         {
             char c = buffer[i];
-            if (c == '.' || c == '!' || c == '?' || c == '\n')
+            bool isSentenceEnd = c == '.' || c == '!' || c == '?' || c == '\n';
+            bool isClauseEnd = c == ',' || c == ';' || c == ':' || c == '—' /* em dash */;
+
+            if (isSentenceEnd || (isClauseEnd && i + 1 >= MinClauseChars))
             {
                 int len = i + 1;
                 var sentence = buffer.ToString(0, len).Trim();

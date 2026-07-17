@@ -140,7 +140,7 @@ public class LocalLlmClient : ILlmClient
             buffer.Append(delta);
 
             string sentence;
-            while ((sentence = TakeSentence(buffer)) != null)
+            while ((sentence = LlmShared.TakeSentence(buffer)) != null)
             {
                 if (sentence.Length == 0)
                 {
@@ -297,28 +297,6 @@ public class LocalLlmClient : ILlmClient
         }
 
         return false;
-    }
-
-    /// <summary>
-    /// Removes and returns the first complete sentence (up to and including a '.', '!',
-    /// '?' or newline) from <paramref name="buffer"/>. Returns null when there is no
-    /// sentence terminator yet, or an empty string when the removed span was blank.
-    /// </summary>
-    private static string TakeSentence(StringBuilder buffer)
-    {
-        for (int i = 0; i < buffer.Length; i++)
-        {
-            char c = buffer[i];
-            if (c == '.' || c == '!' || c == '?' || c == '\n')
-            {
-                int len = i + 1;
-                var sentence = buffer.ToString(0, len).Trim();
-                buffer.Remove(0, len);
-                return sentence;
-            }
-        }
-
-        return null;
     }
 
     private class ChatRequest
