@@ -69,6 +69,14 @@ export function combineResults(results, metadata) {
       deployment: metadata.deployment,
       runner: metadata.runner ?? "benchmark-runner",
       llmModel: metadata.llmModel,
+      // Every other tweakable engine/voice the target reported via /version at run time
+      // (see Program.cs's DescribeModelConfig) - recorded automatically so voice/TTS/STT
+      // experiments show up in the results without a matching manual CI input each time.
+      ttsEngine: metadata.ttsEngine,
+      ttsVoice: metadata.ttsVoice,
+      sttEngine: metadata.sttEngine,
+      sttModel: metadata.sttModel,
+      avatarRenderer: metadata.avatarRenderer,
       samples: String(cases.length),
       // A GitHub-hosted runner cannot observe Kubernetes restart counts. Keep
       // that distinction explicit instead of publishing the string "undefined".
@@ -328,6 +336,11 @@ async function main() {
     deployment: one("deployment") ?? "—",
     runner: one("runner") ?? "benchmark-runner",
     llmModel: one("llm-model") ?? "—",
+    ttsEngine: one("tts-engine") ?? "—",
+    ttsVoice: one("tts-voice") ?? "—",
+    sttEngine: one("stt-engine") ?? "—",
+    sttModel: one("stt-model") ?? "—",
+    avatarRenderer: one("avatar-renderer") ?? "—",
     deploymentRestarts: one("deployment-restarts") ?? null,
   });
   await mkdir(path.dirname(runOut), { recursive: true });

@@ -20,8 +20,8 @@ on:
         default: ""
         type: string
       webrtc_llm_model:
-        description: LLM model name configured on the target
-        default: mistral-3-14B
+        description: Override for the target's reported LLM model (leave blank to auto-detect from /version)
+        default: ""
         type: string
   schedule:
     - cron: "17 3 * * *"
@@ -127,6 +127,23 @@ jobs:
           DEPLOYED_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("bench-webrtc/version.json")).sha || process.env.GITHUB_SHA)' )"
           DEPLOYMENT="${{ github.event.inputs.deployment }}"
           DEPLOYMENT="${DEPLOYMENT:-$DETECTED_BRANCH}"
+
+          # Every tweakable engine/voice the target itself reports (Program.cs's
+          # DescribeModelConfig, served at /version) - recorded automatically so
+          # voice/TTS/STT swap experiments show up without a matching manual CI input
+          # each time. webrtc_llm_model remains as a manual override only (blank = auto).
+          model_field() {
+            node -e "console.log(JSON.parse(require('fs').readFileSync('bench-webrtc/version.json')).models?.$1 ?? 'unknown')"
+          }
+          DETECTED_LLM_MODEL="$(model_field llmModel)"
+          DETECTED_TTS_ENGINE="$(model_field ttsEngine)"
+          DETECTED_TTS_VOICE="$(model_field ttsVoice)"
+          DETECTED_STT_ENGINE="$(model_field sttEngine)"
+          DETECTED_STT_MODEL="$(model_field sttModel)"
+          DETECTED_AVATAR_RENDERER="$(model_field avatarRenderer)"
+          LLM_MODEL="${{ github.event.inputs.webrtc_llm_model }}"
+          LLM_MODEL="${LLM_MODEL:-$DETECTED_LLM_MODEL}"
+
           INPUTS=()
           for i in $(seq 1 "$ITERATIONS"); do
             node benchmarks/webrtc/run.mjs --url "$TARGET" --audio bench-webrtc/prompt.wav \
@@ -140,7 +157,10 @@ jobs:
             --run-id "webrtc-${GITHUB_RUN_ID}" --commit-sha "$DEPLOYED_SHA" \
             --target "$TARGET" --deployment "$DEPLOYMENT" \
             --runner github-actions-ubuntu \
-            --llm-model "${{ github.event.inputs.webrtc_llm_model || 'mistral-3-14B' }}"
+            --llm-model "$LLM_MODEL" \
+            --tts-engine "$DETECTED_TTS_ENGINE" --tts-voice "$DETECTED_TTS_VOICE" \
+            --stt-engine "$DETECTED_STT_ENGINE" --stt-model "$DETECTED_STT_MODEL" \
+            --avatar-renderer "$DETECTED_AVATAR_RENDERER"
       - name: Upload browser/WebRTC results
         if: always()
         uses: actions/upload-artifact@v4
