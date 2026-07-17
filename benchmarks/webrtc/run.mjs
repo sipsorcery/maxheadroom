@@ -155,6 +155,13 @@ try {
     const source = audioContext.createBufferSource();
     source.buffer = injectedAudio;
     source.connect(microphone);
+    // Some headless Chrome builds do not render an AudioContext graph that only
+    // terminates in MediaStreamAudioDestinationNode. A muted physical-output
+    // branch keeps the synthetic microphone clocked without affecting samples.
+    const keepAlive = audioContext.createGain();
+    keepAlive.gain.value = 0;
+    source.connect(keepAlive);
+    keepAlive.connect(audioContext.destination);
     const ended = new Promise(resolve => { source.onended = resolve; });
     source.start();
     await sleep(Math.max(0, injectedAudio.duration * 1000 - trailingSilenceMs));
