@@ -82,6 +82,51 @@ before VAD produces its final transcript.
 Results are schema-v1 JSON. A failed run also retains a short WebM diagnostic
 recording; successful runs discard it.
 
+### How this test runs
+
+The WebRTC lip-sync test is an external end-to-end test. For the first recorded
+batch, `run.mjs` launched headless Google Chrome on the local Codex Windows
+runner and connected it to the deployed `max-codex.sipsorcery.com` instance.
+The same runner can later be moved to CI; it is not coupled to the Max pod.
+
+Inside Chrome, the runner:
+
+1. creates a real `RTCPeerConnection`;
+2. injects the deterministic WAV file into a synthetic microphone track;
+3. sends that track through Max's normal WebRTC, VAD and STT path;
+4. receives and decodes Max's returned audio and H264 video;
+5. detects audible response onset with Web Audio RMS samples; and
+6. detects visible mouth-motion onset from canvas pixels, while correlating
+   those observations with the server's STT, LLM, TTS and renderer events.
+
+Consequently the measured path includes browser media handling, both network
+directions and the live speech-input pipeline:
+
+```text
+headless Chrome microphone -> WebRTC -> VAD/STT -> LLM -> TTS/Wav2Lip
+                           <- WebRTC audio and video <-
+```
+
+This differs from the benchmark currently used for the Claude deployment.
+Claude's .NET `MaxBench` posts text prompts to `/ask`, posts WAV files directly
+to `/bench/stt`, and reads aggregated timings from `/bench/metrics`. It also
+holds a receive-only SIPSorcery WebRTC peer open and observes the first audible
+G.711 RTP packet, so it is not HTTP-only; however, it does not run a browser,
+send the STT corpus through a WebRTC microphone, decode returned video, or
+measure mouth motion as seen by a viewer.
+
+The approaches are complementary:
+
+- The Claude test is lighter, cheaper to run repeatedly, and is well suited to
+  isolated server-stage timings and corpus WER.
+- The Codex browser test exercises the user-visible conversation path and can
+  measure received audio/video offset, at the cost of more runtime and noisier
+  visual detection.
+
+Their similarly named latency values must not be compared without checking the
+start boundary: Claude's end-to-end first-audio timer begins when `/ask` is
+posted, whereas this WebRTC test begins at the injected speech's end boundary.
+
 ### Durable WebRTC results
 
 See the [current WebRTC benchmark history](results/history.md).
