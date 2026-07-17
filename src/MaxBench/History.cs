@@ -24,6 +24,7 @@ static class History
 {
     private sealed record Run(
         DateTimeOffset Utc, string Label, string LlmModel,
+        string TtsEngine, string TtsVoice, string SttEngine, string SttModel,
         double? FirstAudioP50, double? LlmTtftP50, double? LlmFirstP50, double? LlmCompleteP50,
         double? TtsFirstChunkP50, double? TtsSynthP50, double? LipsyncFirstP50,
         double? RenderTickP95, double? RenderMouthP50, double? RenderComposeP50,
@@ -33,7 +34,8 @@ static class History
     // deliberately has its own shape: its clock starts at injected speech end,
     // whereas the HTTP suite starts when it POSTs /ask.
     private sealed record WebRtcRun(
-        DateTimeOffset Utc, string Label, string LlmModel, string Revision,
+        DateTimeOffset Utc, string Label, string LlmModel,
+        string TtsEngine, string TtsVoice, string SttEngine, string SttModel, string Revision,
         string Target, string Deployment, string Samples, string Restarts,
         string MouthQuality, double? SttP50, double? LlmFirstTokenP50,
         double? AudioP50, double? MouthP50, double? ServerAvOffsetP50,
@@ -87,7 +89,7 @@ static class History
         // Reuse the compact SVG renderer with a projection into the server-run
         // shape; labels below make the browser suite's distinct start point clear.
         var webChartRuns = webRtcRuns.Select(r => new Run(
-            r.Utc, r.Label, r.LlmModel,
+            r.Utc, r.Label, r.LlmModel, r.TtsEngine, r.TtsVoice, r.SttEngine, r.SttModel,
             r.SttP50, r.LlmFirstTokenP50, r.AudioP50, r.MouthP50,
             r.ServerAvOffsetP50, null, null, null, r.Wav2LipP50, null, null, null)).ToList();
         File.WriteAllText(Path.Combine(historyDir, "charts", "webrtc.svg"), BuildChart(
@@ -115,6 +117,10 @@ static class History
                 DateTimeOffset.Parse(j["utc"]!.GetValue<string>(), CultureInfo.InvariantCulture),
                 j["label"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(path),
                 j["llm_model"]?.GetValue<string>() ?? "—",
+                j["tts_engine"]?.GetValue<string>() ?? "—",
+                j["tts_voice"]?.GetValue<string>() ?? "—",
+                j["stt_engine"]?.GetValue<string>() ?? "—",
+                j["stt_model"]?.GetValue<string>() ?? "—",
                 P50FromList(j["ask"]?["first_audio_ms"]),
                 Num(agg?["llm_ttft"]?["p50"]),
                 Num(agg?["llm_first_sentence"]?["p50"]),
@@ -147,6 +153,10 @@ static class History
                 DateTimeOffset.Parse(j["startedAtUtc"]!.GetValue<string>(), CultureInfo.InvariantCulture),
                 j["runId"]?.GetValue<string>() ?? Path.GetFileNameWithoutExtension(path),
                 config?["llmModel"]?.GetValue<string>() ?? "—",
+                config?["ttsEngine"]?.GetValue<string>() ?? "—",
+                config?["ttsVoice"]?.GetValue<string>() ?? "—",
+                config?["sttEngine"]?.GetValue<string>() ?? "—",
+                config?["sttModel"]?.GetValue<string>() ?? "—",
                 j["source"]?["commitSha"]?.GetValue<string>()?.Substring(0, Math.Min(8, j["source"]?["commitSha"]?.GetValue<string>()?.Length ?? 0)) ?? "—",
                 config?["target"]?.GetValue<string>() ?? "—",
                 config?["deployment"]?.GetValue<string>() ?? "—",
@@ -216,12 +226,13 @@ static class History
         sb.AppendLine();
         sb.AppendLine("![render](charts/render.svg)");
         sb.AppendLine();
-        sb.AppendLine("| run (UTC) | label | LLM model | first audio (e2e) | llm ttft | llm first | tts first chunk | lipsync first | render tick p95 | render mouth | render compose | WER |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("| run (UTC) | label | LLM model | TTS | STT | first audio (e2e) | llm ttft | llm first | tts first chunk | lipsync first | render tick p95 | render mouth | render compose | WER |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|");
         foreach (var r in Enumerable.Reverse(runs))
         {
             sb.AppendLine(
-                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {r.LlmModel} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmTtftP50)} | " +
+                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {r.LlmModel} | {EngineCell(r.TtsEngine, r.TtsVoice)} | " +
+                $"{EngineCell(r.SttEngine, r.SttModel)} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmTtftP50)} | " +
                 $"{Fmt(r.LlmFirstP50)} | {Fmt(r.TtsFirstChunkP50)} | {Fmt(r.LipsyncFirstP50)} | {Fmt(r.RenderTickP95)} | " +
                 $"{Fmt(r.RenderMouthP50)} | {Fmt(r.RenderComposeP50)} | " +
                 $"{(r.Wer is double w ? w.ToString("P1", CultureInfo.InvariantCulture) : "—")} |");
@@ -234,12 +245,13 @@ static class History
         sb.AppendLine();
         sb.AppendLine("This suite drives a real headless Chrome WebRTC viewer with deterministic speech. Its clock starts when that speech ends, so its results are intentionally shown separately from the HTTP suite above.");
         sb.AppendLine();
-        sb.AppendLine("| run (UTC) | deployment | LLM model | revision | n | STT final | LLM first token | received audio | received mouth | server A/V offset | browser A/V offset | quality |");
-        sb.AppendLine("|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|");
+        sb.AppendLine("| run (UTC) | deployment | LLM model | TTS | STT | revision | n | STT final | LLM first token | received audio | received mouth | server A/V offset | browser A/V offset | quality |");
+        sb.AppendLine("|---|---|---|---|---|---|---:|---:|---:|---:|---:|---:|---:|---|");
         foreach (var r in Enumerable.Reverse(webRtcRuns))
         {
             sb.AppendLine(
-                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Deployment} | {r.LlmModel} | {r.Revision} | {r.Samples} | " +
+                $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Deployment} | {r.LlmModel} | {EngineCell(r.TtsEngine, r.TtsVoice)} | " +
+                $"{EngineCell(r.SttEngine, r.SttModel)} | {r.Revision} | {r.Samples} | " +
                 $"{Fmt(r.SttP50)} | {Fmt(r.LlmFirstTokenP50)} | {Fmt(r.AudioP50)} | {Fmt(r.MouthP50)} | " +
                 $"{Fmt(r.ServerAvOffsetP50)} | {Fmt(r.BrowserAvOffsetP50)} | {r.MouthQuality} |");
         }
@@ -260,6 +272,7 @@ static class History
         sb.AppendLine("All latency figures are the p50 (median) across the prompts/windows in one bench run, in milliseconds unless noted. See [bench/README.md](https://github.com/sipsorcery/maxheadroom/blob/master/bench/README.md) for how each is measured.");
         sb.AppendLine();
         sb.AppendLine("- **LLM model** — which model generated the replies for that run (`GET /version`'s `llmModel`: the in-process GGUF filename, or the configured endpoint model name). Model swaps are a config change, not a code change, so this is the only thing that tells two runs with the same commit label apart. Runs from before this field existed show `—`.");
+        sb.AppendLine("- **TTS / STT** — the speech engine (and voice/model) actually running for that run (`GET /version`'s `models.ttsEngine`/`ttsVoice`/`sttEngine`/`sttModel`), e.g. `sherpa (vits-piper-en_US-ryan-high)` or `elevenlabs (21m00Tcm4TlvDq8ikWAM)`. An engine swap (sherpa ↔ ElevenLabs) is a config change like the LLM model, not a code change, and materially shifts every downstream latency number - always check this column before comparing runs. Runs from before this field existed show `—`; runs from a target whose server doesn't yet expose `models` show `unknown`.");
         sb.AppendLine("- **first audio (e2e)** — *end-to-end LLM reply latency.* Wall-clock time from the bench posting a prompt to `/ask` until the first audible (non-silent) audio packet arrives over the WebRTC connection. The single number that best represents \"how long the viewer waits before Max starts talking.\"");
         sb.AppendLine("- **llm ttft** — time to the LLM's first token off the wire (`llm_ttft`). The purest measure of model/endpoint responsiveness; program target <400ms.");
         sb.AppendLine("- **llm first** — server-side time from prompt received to the first *sentence* of the LLM's reply becoming available for speech (`llm_first_sentence`). The gap above *llm ttft* is sentence-chunking cost - the wait for the whole first sentence to generate.");
@@ -274,6 +287,10 @@ static class History
         return sb.ToString();
 
         static string Fmt(double? v) => v is double d ? d.ToString("F0", CultureInfo.InvariantCulture) : "—";
+
+        static string EngineCell(string engine, string voiceOrModel) =>
+            string.IsNullOrWhiteSpace(engine) || engine == "—" ? "—" :
+            string.IsNullOrWhiteSpace(voiceOrModel) || voiceOrModel == "—" ? engine : $"{engine} ({voiceOrModel})";
     }
 
     /// <summary>Minimal dependency-free SVG line chart: one polyline per series over run index.

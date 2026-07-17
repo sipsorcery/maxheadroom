@@ -49,17 +49,28 @@ var http = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
 var results = new JsonObject { ["target"] = target, ["utc"] = DateTime.UtcNow.ToString("o"), ["mode"] = mode };
 if (GetOpt("--label") is string label) { results["label"] = label; }
 
-// The LLM in play is config, not code - a model swap doesn't change the git sha, so
-// without this the history table can't tell two different models apart under the
-// same label. Best-effort: an old/unbadged instance just won't have the field.
-string llmModel = null;
+// The model config in play is config, not code - a model/engine swap doesn't change
+// the git sha, so without this the history table can't tell two different setups
+// apart under the same label. Best-effort: an old/unbadged instance just won't have
+// the fields.
+string llmModel = null, ttsEngine = null, ttsVoice = null, sttEngine = null, sttModel = null;
 try
 {
     var versionResp = await http.GetAsync($"{target}/version");
     if (versionResp.IsSuccessStatusCode)
     {
-        llmModel = JsonNode.Parse(await versionResp.Content.ReadAsStringAsync())?["llmModel"]?.GetValue<string>();
+        var version = JsonNode.Parse(await versionResp.Content.ReadAsStringAsync());
+        llmModel = version?["llmModel"]?.GetValue<string>();
         if (llmModel != null) { results["llm_model"] = llmModel; }
+        var models = version?["models"];
+        ttsEngine = models?["ttsEngine"]?.GetValue<string>();
+        ttsVoice = models?["ttsVoice"]?.GetValue<string>();
+        sttEngine = models?["sttEngine"]?.GetValue<string>();
+        sttModel = models?["sttModel"]?.GetValue<string>();
+        if (ttsEngine != null) { results["tts_engine"] = ttsEngine; }
+        if (ttsVoice != null) { results["tts_voice"] = ttsVoice; }
+        if (sttEngine != null) { results["stt_engine"] = sttEngine; }
+        if (sttModel != null) { results["stt_model"] = sttModel; }
     }
 }
 catch { /* best effort */ }
@@ -67,6 +78,8 @@ catch { /* best effort */ }
 var summary = new StringBuilder();
 summary.AppendLine($"# Max bench — {target}");
 if (llmModel != null) { summary.AppendLine($"LLM: `{llmModel}`"); }
+if (ttsEngine != null) { summary.AppendLine($"TTS: `{ttsEngine}`{(ttsVoice != null ? $" (`{ttsVoice}`)" : "")}"); }
+if (sttEngine != null) { summary.AppendLine($"STT: `{sttEngine}`{(sttModel != null ? $" (`{sttModel}`)" : "")}"); }
 summary.AppendLine();
 
 // Fixed prompt set: stable across runs so latency numbers are comparable.
