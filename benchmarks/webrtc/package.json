@@ -1,0 +1,11 @@
+{
+  "name": "max-webrtc-lipsync-benchmark",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "1.55.0"
+  }
+}
