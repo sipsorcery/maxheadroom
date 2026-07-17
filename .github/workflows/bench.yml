@@ -112,15 +112,16 @@ jobs:
           mkdir -p bench-webrtc/runs
           curl --fail --silent --show-error "$TARGET/version" > bench-webrtc/version.json
           DETECTED_BRANCH="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("bench-webrtc/version.json")).branch || "unknown")')"
+          DEPLOYED_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("bench-webrtc/version.json")).sha || process.env.GITHUB_SHA)' )"
           DEPLOYMENT="${{ github.event.inputs.deployment }}"
           DEPLOYMENT="${DEPLOYMENT:-$DETECTED_BRANCH}"
           INPUTS=()
           for i in $(seq 1 "$ITERATIONS"); do
             node benchmarks/webrtc/run.mjs --url "$TARGET" --audio bench-webrtc/prompt.wav \
-              --out "bench-webrtc/runs/$i.json" --recording "bench-webrtc/diagnostic-$i.webm"
+              --out "bench-webrtc/runs/$i.json" --recording "bench-webrtc/diagnostic-$i.webm" \
+              --commit-sha "$DEPLOYED_SHA"
             INPUTS+=(--input "bench-webrtc/runs/$i.json")
           done
-          DEPLOYED_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("bench-webrtc/version.json")).sha || process.env.GITHUB_SHA)' )"
           node benchmarks/webrtc/report.mjs \
             "${INPUTS[@]}" \
             --run-out bench-webrtc/webrtc-result.json --history-dir bench-webrtc/generated-history \
