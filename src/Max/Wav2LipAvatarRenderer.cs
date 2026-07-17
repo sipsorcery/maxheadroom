@@ -169,6 +169,11 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private readonly byte[] _postByte;                  // scanline*vignette per pixel, 0..255.
     private readonly byte[] _biasPost;                  // grade bias * post, per pixel BGR.
     private readonly int[] _gradeM;                     // 3x3 colour matrix, Q8 fixed point.
+    // gradeM[0/1] folded with the per-pixel post mask ONCE at startup (post never changes -
+    // it's a static scanline*vignette pattern), so the per-frame hot loop in GradeToBgr does
+    // one shift instead of two and skips a redundant multiply-by-post per channel per pixel.
+    private readonly int[] _gradeM00Post;
+    private readonly int[] _gradeM01Post;
 
     // Audio -> mouth state (locked).
     private readonly object _audioLock = new();
@@ -230,6 +235,14 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         personaOpaque.Dispose();
 
         BuildGradeTables(_matteAlpha, out _postByte, out _biasPost, out _gradeM);
+
+        _gradeM00Post = new int[WIDTH * HEIGHT];
+        _gradeM01Post = new int[WIDTH * HEIGHT];
+        for (int p = 0; p < WIDTH * HEIGHT; p++)
+        {
+            _gradeM00Post[p] = _gradeM[0] * _postByte[p];
+            _gradeM01Post[p] = _gradeM[1] * _postByte[p];
+        }
 
         _renderTimer = new Timer(RenderTick, null, Timeout.Infinite, Timeout.Infinite);
     }
@@ -768,24 +781,39 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     /// post map) while converting the composited BGRA frame to the encoder's BGR24.</summary>
     private byte[] GradeToBgr(SKBitmap frame)
     {
-        var bgr = new byte[WIDTH * HEIGHT * 3];
-        ReadOnlySpan<byte> src;
-        unsafe { src = new ReadOnlySpan<byte>((byte*)frame.GetPixels().ToPointer(), WIDTH * HEIGHT * 4); }
+        // Diagnostic only while speaking (matches the render_mouth/compose/encode gating in
+        // RenderTick) - this is the render sprint's #19 investigation into where render_compose
+        // time goes: the whole 640x480 frame vs the small face-box draws in RenderFrame.
+        var gradeClock = _speaking ? System.Diagnostics.Stopwatch.StartNew() : null;
 
-        int m00 = _gradeM[0], m01 = _gradeM[1];
-        for (int p = 0, s = 0, d = 0; p < WIDTH * HEIGHT; p++, s += 4, d += 3)
+        var bgr = new byte[WIDTH * HEIGHT * 3];
+        unsafe
         {
-            int b = src[s], g = src[s + 1], r = src[s + 2];
-            // Desat+dim matrix: diag m00, off-diag m01 (symmetric across channels).
-            int b2 = (m00 * b + m01 * (g + r)) >> 8;
-            int g2 = (m00 * g + m01 * (b + r)) >> 8;
-            int r2 = (m00 * r + m01 * (b + g)) >> 8;
-            int post = _postByte[p];
-            int bp = p * 3;
-            bgr[d + 0] = (byte)Math.Min(255, ((b2 * post) >> 8) + _biasPost[bp + 0]);
-            bgr[d + 1] = (byte)Math.Min(255, ((g2 * post) >> 8) + _biasPost[bp + 1]);
-            bgr[d + 2] = (byte)Math.Min(255, ((r2 * post) >> 8) + _biasPost[bp + 2]);
+            byte* src = (byte*)frame.GetPixels().ToPointer();
+            fixed (byte* biasPost = _biasPost)
+            fixed (byte* dstBase = bgr)
+            fixed (int* m00Post = _gradeM00Post)
+            fixed (int* m01Post = _gradeM01Post)
+            {
+                byte* dst = dstBase;
+                for (int p = 0, s = 0, d = 0; p < WIDTH * HEIGHT; p++, s += 4, d += 3)
+                {
+                    int b = src[s], g = src[s + 1], r = src[s + 2];
+                    // Desat+dim matrix folded with the per-pixel post mask (see the
+                    // constructor): one shift instead of two, one multiply saved per channel.
+                    int m00 = m00Post[p], m01 = m01Post[p];
+                    int b2 = (m00 * b + m01 * (g + r)) >> 16;
+                    int g2 = (m00 * g + m01 * (b + r)) >> 16;
+                    int r2 = (m00 * r + m01 * (b + g)) >> 16;
+                    int bp = p * 3;
+                    dst[d + 0] = (byte)Math.Min(255, b2 + biasPost[bp + 0]);
+                    dst[d + 1] = (byte)Math.Min(255, g2 + biasPost[bp + 1]);
+                    dst[d + 2] = (byte)Math.Min(255, r2 + biasPost[bp + 2]);
+                }
+            }
         }
+
+        if (gradeClock != null) { BenchMetrics.Record("render_grade", gradeClock.Elapsed.TotalMilliseconds); }
         return bgr;
     }
 
