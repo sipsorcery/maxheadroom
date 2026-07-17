@@ -188,6 +188,29 @@ try {
       await sleep(100);
     }
 
+    // Connection state proves ICE/DTLS only. These counters show whether the
+    // browser actually encoded/sent microphone RTP and whether media arrived
+    // back at the viewer; retain them even when the benchmark case fails.
+    const stats = await pc.getStats();
+    const values = [...stats.values()];
+    const outboundAudio = values.find(item => item.type === "outbound-rtp" && item.kind === "audio");
+    const inboundAudio = values.find(item => item.type === "inbound-rtp" && item.kind === "audio");
+    const inboundVideo = values.find(item => item.type === "inbound-rtp" && item.kind === "video");
+    const selectedPair = values.find(item => item.type === "candidate-pair" &&
+      (item.selected || item.nominated) && item.state === "succeeded");
+    const codec = outboundAudio?.codecId ? stats.get(outboundAudio.codecId) : undefined;
+    const mediaStats = {
+      outboundAudioPacketsSent: outboundAudio?.packetsSent ?? 0,
+      outboundAudioBytesSent: outboundAudio?.bytesSent ?? 0,
+      outboundAudioCodec: codec?.mimeType ?? "unknown",
+      outboundAudioPayloadType: codec?.payloadType ?? null,
+      inboundAudioPacketsReceived: inboundAudio?.packetsReceived ?? 0,
+      inboundAudioBytesReceived: inboundAudio?.bytesReceived ?? 0,
+      inboundVideoFramesDecoded: inboundVideo?.framesDecoded ?? 0,
+      candidatePairPacketsSent: selectedPair?.packetsSent ?? 0,
+      candidatePairPacketsReceived: selectedPair?.packetsReceived ?? 0,
+    };
+
     clearInterval(audioSampler);
     sampleVideo = false;
     recorder.stop();
@@ -203,7 +226,7 @@ try {
     pc.close();
     await audioContext.close();
 
-    return { sessionId, speechEndMs, audioSamples, mouthSamples, server, recordingBase64 };
+    return { sessionId, speechEndMs, audioSamples, mouthSamples, server, mediaStats, recordingBase64 };
   }, { baseUrl, audioBase64, timeoutMs, trailingSilenceMs });
 } finally {
   await browser.close();
