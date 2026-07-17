@@ -544,7 +544,9 @@ class Program
                 {
                     try
                     {
-                        recognizer.Write(micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat));
+                        var pcm = micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat);
+                        benchmarkSession?.RecordReceivedAudio(pcm);
+                        recognizer.Write(pcm);
                     }
                     catch (Exception excp)
                     {
