@@ -10,12 +10,13 @@ Measures three things against a running Max instance:
 
 ## Prerequisites
 
-The target instance must run with `BENCH_ENDPOINTS=true` (enabled on
-max-claude.sipsorcery.com; **not** on production) which exposes:
+The target instance must run with `BENCH_ENDPOINTS=true` or
+`BENCHMARK_ENDPOINT_ENABLED=true` (**not** enabled on production), which exposes:
 
 - `GET /bench/metrics` — stage-timing ring buffer + aggregates
 - `POST /bench/reset` — clear the buffer before a measurement pass
 - `POST /bench/stt` — WAV in (16-bit PCM), transcript + timing out
+- `/benchmark/webrtc/*` — correlated browser/WebRTC session events and media diagnostics
 
 ## Running
 
@@ -26,9 +27,12 @@ dotnet run --project src/MaxBench -c Release -- all --target https://max-claude.
 Modes: `ask` (default 5 iterations, `--iterations N`), `stt`, `report`, `all`.
 Markdown summary goes to stdout; `--json` writes machine-readable results.
 
-CI: `.github/workflows/bench.yml` runs this on demand (workflow_dispatch),
-nightly, and on pushes to agent branches, publishing the summary to the job
-page and the JSON as an artifact.
+CI: `.github/workflows/bench.yml` runs nightly or by deliberate manual dispatch.
+Both the HTTP/API suite and the browser/WebRTC suite always measure the same
+`target`, sequentially, so a result describes one deployed experiment without
+competing WebRTC viewers. To compare Codex and Claude, dispatch one run for each
+deployment URL with a matching `deployment` label. Feature-branch pushes do not
+automatically spend runner time.
 
 ## Trend history
 

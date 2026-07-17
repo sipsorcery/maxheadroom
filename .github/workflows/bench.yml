@@ -7,19 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Base URL of the HTTP/API bench instance
+        description: Base URL measured by both the HTTP/API and browser/WebRTC suites
         default: https://max-claude.sipsorcery.com
       iterations:
         description: Number of HTTP /ask prompts
         default: "5"
-      webrtc_target:
-        description: Base URL of the browser/WebRTC bench instance
-        default: https://max-codex.sipsorcery.com
       webrtc_iterations:
         description: Number of deterministic WebRTC speech transitions
         default: "3"
+      deployment:
+        description: Experiment/deployment label written to benchmark history
+        default: claude
+        type: string
       webrtc_llm_model:
-        description: LLM model name configured on the WebRTC target
+        description: LLM model name configured on the target
         default: mistral-3-14B
         type: string
   schedule:
@@ -68,6 +69,8 @@ jobs:
 
   webrtc:
     name: Browser WebRTC suite
+    needs: http
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -98,7 +101,7 @@ jobs:
             -af "apad=pad_dur=0.8" -t 3.85 -ar 48000 -ac 1 bench-webrtc/prompt.wav
       - name: Run deterministic browser/WebRTC transitions
         run: |
-          TARGET="${{ github.event.inputs.webrtc_target || 'https://max-codex.sipsorcery.com' }}"
+          TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
           ITERATIONS="${{ github.event.inputs.webrtc_iterations || '3' }}"
           mkdir -p bench-webrtc/runs
           curl --fail --silent --show-error "$TARGET/version" > bench-webrtc/version.json
@@ -113,7 +116,8 @@ jobs:
             "${INPUTS[@]}" \
             --run-out bench-webrtc/webrtc-result.json --history-dir bench-webrtc/generated-history \
             --run-id "webrtc-${GITHUB_RUN_ID}" --commit-sha "$DEPLOYED_SHA" \
-            --target "$TARGET" --deployment codex --runner github-actions-ubuntu \
+            --target "$TARGET" --deployment "${{ github.event.inputs.deployment || 'claude' }}" \
+            --runner github-actions-ubuntu \
             --llm-model "${{ github.event.inputs.webrtc_llm_model || 'mistral-3-14B' }}"
       - name: Upload browser/WebRTC results
         if: always()
