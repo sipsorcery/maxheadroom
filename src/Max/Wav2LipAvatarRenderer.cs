@@ -175,6 +175,25 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private readonly int[] _gradeM00Post;
     private readonly int[] _gradeM01Post;
 
+    // Render scratch buffers, reused every tick instead of allocated fresh (RenderFrame and
+    // DrawMouth used to `new SKBitmap(...)` on every call - ~1.2MB+ for the full-size one
+    // alone, 25x/second). Every draw into these fully overwrites their pixels each frame (the
+    // background Clear, and Src-blend draws below, all cover 100% of the target), so reuse
+    // without clearing is safe. Single-threaded by construction: RenderTick's _renderBusy
+    // guard means only one tick is ever inside RenderFrame at a time.
+    // NOTE: the "fg" (persona+mouth+blink) bitmap/canvas is deliberately NOT in this pool -
+    // see the comment in RenderFrame.
+    private readonly SKBitmap _frameBitmap;
+    private readonly SKCanvas _frameCanvas;
+    private readonly SKBitmap _mouthBitmap;
+    private readonly SKBitmap _scaledMouthBitmap;
+    private readonly SKCanvas _scaledMouthCanvas;
+    private readonly SKPaint _defaultPaint = new();               // plain SrcOver, shared.
+    private readonly SKPaint _srcPaint = new() { BlendMode = SKBlendMode.Src };
+    // One strip bitmap/canvas per eye (blink lid skin) - w/stripH are fixed per persona.
+    private readonly SKBitmap[] _blinkStripBitmaps;
+    private readonly SKCanvas[] _blinkStripCanvases;
+
     // Audio -> mouth state (locked).
     private readonly object _audioLock = new();
     private readonly List<short> _pcm = new();
@@ -242,6 +261,24 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         {
             _gradeM00Post[p] = _gradeM[0] * _postByte[p];
             _gradeM01Post[p] = _gradeM[1] * _postByte[p];
+        }
+
+        // Render scratch buffers - allocated once here instead of per-tick (see the field
+        // comments above).
+        _frameBitmap = new SKBitmap(new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul));
+        _frameCanvas = new SKCanvas(_frameBitmap);
+        _mouthBitmap = new SKBitmap(new SKImageInfo(IMG_SIZE, IMG_SIZE, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var (fby1, fby2, fbx1, fbx2) = _faceBox;
+        _scaledMouthBitmap = new SKBitmap(new SKImageInfo(fbx2 - fbx1, fby2 - fby1, SKColorType.Bgra8888, SKAlphaType.Premul));
+        _scaledMouthCanvas = new SKCanvas(_scaledMouthBitmap);
+        _blinkStripBitmaps = new SKBitmap[_eyes.Length];
+        _blinkStripCanvases = new SKCanvas[_eyes.Length];
+        for (int i = 0; i < _eyes.Length; i++)
+        {
+            var (_, _, ew, eh) = _eyes[i];
+            int stripH = Math.Max(3, (int)(eh * 0.35));
+            _blinkStripBitmaps[i] = new SKBitmap(new SKImageInfo(ew, stripH, SKColorType.Bgra8888, SKAlphaType.Premul));
+            _blinkStripCanvases[i] = new SKCanvas(_blinkStripBitmaps[i]);
         }
 
         _renderTimer = new Timer(RenderTick, null, Timeout.Infinite, Timeout.Infinite);
@@ -544,41 +581,44 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             _bgCacheIdx = idx;
         }
 
-        using var frame = new SKBitmap(new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul));
-        using (var canvas = new SKCanvas(frame))
-        using (var paint = new SKPaint())
+        // Reused scratch buffers (see the field comments) - every draw below covers each
+        // bitmap's full pixel area, so no explicit clear is needed before reuse.
+        _frameCanvas.DrawBitmap(_bgCache, SKRect.Create(WIDTH, HEIGHT), _defaultPaint);
+
+        // Figure layer: persona copy + live mouth + blink, drawn through zoom*pose so the
+        // matte alpha warps with it (one SrcOver draw = the whole blend).
+        // NOT pooled (unlike frame/mouth/scaledMouth below): reusing a persistent fg bitmap
+        // + canvas here produced a real, reproducible pixel corruption under the pose/zoom
+        // warp draw (bisected empirically - verified via --avatar-test pixel diffs against
+        // an unpooled baseline; every other pooled buffer here was cleared of suspicion the
+        // same way). Root cause not fully identified (suspect some Skia-level interaction
+        // between a persistently-reused destination canvas and a non-trivial transform draw
+        // repeated across many frames) - not worth chasing further given fg is one of the
+        // smaller buffers; frame/mouth/scaledMouth still get the bulk of the allocation win.
+        using var fg = new SKBitmap(_persona.Info);
+        _persona.CopyTo(fg);
+        using (var fgCanvas = new SKCanvas(fg))
         {
-            canvas.DrawBitmap(_bgCache, SKRect.Create(WIDTH, HEIGHT), paint);
-
-            // Figure layer: persona copy + live mouth + blink, drawn through zoom*pose so the
-            // matte alpha warps with it (one SrcOver draw = the whole blend).
-            using var fg = new SKBitmap(_persona.Info);
-            _persona.CopyTo(fg);
-            using (var fgCanvas = new SKCanvas(fg))
+            DrawMouth(fgCanvas, mouth96);
+            double blink = BlinkAmount(t);
+            if (blink > 0)
             {
-                DrawMouth(fgCanvas, mouth96);
-                double blink = BlinkAmount(t);
-                if (blink > 0)
-                {
-                    DrawBlink(fgCanvas, blink);
-                }
+                DrawBlink(fgCanvas, blink);
             }
-
-            canvas.SetMatrix(PoseMatrix(t).PreConcat(ZoomMatrix()));
-            canvas.DrawBitmap(fg, 0, 0, paint);
-            canvas.ResetMatrix();
         }
 
-        return GradeToBgr(frame);
+        _frameCanvas.SetMatrix(PoseMatrix(t).PreConcat(ZoomMatrix()));
+        _frameCanvas.DrawBitmap(fg, 0, 0, _defaultPaint);
+        _frameCanvas.ResetMatrix();
+
+        return GradeToBgr(_frameBitmap);
     }
 
     private void DrawMouth(SKCanvas fgCanvas, byte[] mouth96)
     {
-        var info = new SKImageInfo(IMG_SIZE, IMG_SIZE, SKColorType.Bgra8888, SKAlphaType.Premul);
-        using var mouthBmp = new SKBitmap(info);
         unsafe
         {
-            var dst = (byte*)mouthBmp.GetPixels().ToPointer();
+            var dst = (byte*)_mouthBitmap.GetPixels().ToPointer();
             for (int i = 0, o = 0; i < mouth96.Length; i += 3, o += 4)
             {
                 dst[o] = mouth96[i]; dst[o + 1] = mouth96[i + 1]; dst[o + 2] = mouth96[i + 2]; dst[o + 3] = 255;
@@ -590,14 +630,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         // pasting opaque there would punch a hard rectangle through the figure's alpha.
         var (y1, y2, x1, x2) = _faceBox;
         int bw = x2 - x1, bh = y2 - y1;
-        using var scaled = new SKBitmap(new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Premul));
-        using (var c = new SKCanvas(scaled))
-        {
-            c.DrawBitmap(mouthBmp, SKRect.Create(bw, bh), new SKPaint());
-        }
+        _scaledMouthCanvas.DrawBitmap(_mouthBitmap, SKRect.Create(bw, bh), _defaultPaint);
         unsafe
         {
-            var px = (byte*)scaled.GetPixels().ToPointer();
+            var px = (byte*)_scaledMouthBitmap.GetPixels().ToPointer();
             for (int yy = 0; yy < bh; yy++)
             {
                 int rowA = (y1 + yy) * WIDTH + x1;
@@ -614,16 +650,15 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             }
         }
 
-        using var paint = new SKPaint { BlendMode = SKBlendMode.Src };
-        fgCanvas.DrawBitmap(scaled, x1, y1, paint);
+        fgCanvas.DrawBitmap(_scaledMouthBitmap, x1, y1, _srcPaint);
     }
 
     /// <summary>Blink: stretch the lid skin just above each eye down over it (per the sidecar).</summary>
     private void DrawBlink(SKCanvas fgCanvas, double amount)
     {
-        using var paint = new SKPaint { BlendMode = SKBlendMode.Src };
-        foreach (var (x, y, w, h) in _eyes)
+        for (int i = 0; i < _eyes.Length; i++)
         {
+            var (x, y, w, h) = _eyes[i];
             int cover = (int)(h * amount);
             if (cover <= 2 || y - h < 0)
             {
@@ -632,12 +667,8 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             int stripH = Math.Max(3, (int)(h * 0.35));
             var src = SKRect.Create(x, y - stripH, w, stripH);
             var dst = SKRect.Create(x, y, w, cover);
-            using var strip = new SKBitmap(new SKImageInfo(w, stripH, SKColorType.Bgra8888, SKAlphaType.Premul));
-            using (var c = new SKCanvas(strip))
-            {
-                c.DrawBitmap(_persona, src, SKRect.Create(w, stripH));
-            }
-            fgCanvas.DrawBitmap(strip, dst, paint);
+            _blinkStripCanvases[i].DrawBitmap(_persona, src, SKRect.Create(w, stripH));
+            fgCanvas.DrawBitmap(_blinkStripBitmaps[i], dst, _srcPaint);
         }
     }
 
@@ -1067,5 +1098,23 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         _persona?.Dispose();
         _bgCache?.Dispose();
         _videoEncoder?.Dispose();
+
+        // Render scratch buffers - now pooled for the renderer's lifetime instead of
+        // allocated per tick, so they need disposing here instead of via `using`.
+        _frameCanvas?.Dispose();
+        _frameBitmap?.Dispose();
+        _mouthBitmap?.Dispose();
+        _scaledMouthCanvas?.Dispose();
+        _scaledMouthBitmap?.Dispose();
+        _defaultPaint?.Dispose();
+        _srcPaint?.Dispose();
+        if (_blinkStripCanvases != null)
+        {
+            foreach (var c in _blinkStripCanvases) { c?.Dispose(); }
+        }
+        if (_blinkStripBitmaps != null)
+        {
+            foreach (var b in _blinkStripBitmaps) { b?.Dispose(); }
+        }
     }
 }
