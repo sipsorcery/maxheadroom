@@ -101,10 +101,22 @@ jobs:
           curl --fail --location --retry 3 \
             https://www.voiptroubleshooter.com/open_speech/american/OSR_us_000_0010_8k.wav \
             -o bench-webrtc/source.wav
-          # First Harvard sentence plus 800ms of silence. The runner reports its
-          # prompt-end boundary before the trailing silence.
-          ffmpeg -hide_banner -loglevel error -y -i bench-webrtc/source.wav -t 3.05 \
-            -af "apad=pad_dur=0.8" -t 3.85 -ar 48000 -ac 1 bench-webrtc/prompt.wav
+          # First Harvard sentence plus 800ms of silence. Trim inside the filter
+          # graph: using two output -t options makes the later duration win and
+          # leaves speech in the section that the runner treats as trailing silence.
+          ffmpeg -hide_banner -loglevel error -y -i bench-webrtc/source.wav \
+            -af "atrim=duration=3.05,apad=pad_dur=0.8" -t 3.85 \
+            -ar 48000 -ac 1 bench-webrtc/prompt.wav
+
+          # Fail before opening WebRTC if prompt generation ever stops providing
+          # enough silence to cross Max's 600ms streaming-STT endpoint threshold.
+          SILENCE_REPORT="$(ffmpeg -hide_banner -nostats -i bench-webrtc/prompt.wav \
+            -af "silencedetect=noise=-50dB:d=0.75" -f null - 2>&1)"
+          echo "$SILENCE_REPORT"
+          SILENCE_SECONDS="$(sed -n 's/.*silence_duration: \([0-9.]*\).*/\1/p' \
+            <<< "$SILENCE_REPORT" | tail -1)"
+          test -n "$SILENCE_SECONDS"
+          awk -v seconds="$SILENCE_SECONDS" 'BEGIN { exit !(seconds >= 0.75) }'
       - name: Run deterministic browser/WebRTC transitions
         run: |
           TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
