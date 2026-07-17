@@ -38,7 +38,16 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
     // VAD / segmentation tuning, all against the incoming 8kHz stream.
     protected const int SampleRate = 8000;
     private const double SilenceRmsThreshold = 350.0;               // RMS below this (16-bit) counts as silence.
-    private const int TrailingSilenceSamples = SampleRate * 6 / 10; // ~0.6s of silence ends an utterance.
+
+    // Trailing silence that ends an utterance (default ~0.6s). Overridable with
+    // STT_TRAILING_SILENCE_MS (clamped 100-5000) to trade endpointing latency
+    // against premature cut-offs.
+    private static readonly int TrailingSilenceSamples = SampleRate * GetTrailingSilenceMs() / 1000;
+
+    private static int GetTrailingSilenceMs() =>
+        int.TryParse(Environment.GetEnvironmentVariable("STT_TRAILING_SILENCE_MS"), out var ms) && ms >= 100 && ms <= 5000
+            ? ms
+            : 600;
     private const int MaxUtteranceSamples = SampleRate * 15;        // Hard cap so we always flush eventually.
     private const int MinUtteranceSamples = SampleRate * 3 / 10;    // Ignore blips shorter than ~0.3s.
 
