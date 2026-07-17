@@ -38,9 +38,22 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
     // VAD / segmentation tuning, all against the incoming 8kHz stream.
     protected const int SampleRate = 8000;
     private const double SilenceRmsThreshold = 350.0;               // RMS below this (16-bit) counts as silence.
-    private const int TrailingSilenceSamples = SampleRate * 6 / 10; // ~0.6s of silence ends an utterance.
+    private const int DefaultTrailingSilenceMilliseconds = 600;
+    private static readonly int TrailingSilenceMilliseconds = ReadTrailingSilenceMilliseconds();
+    private static readonly int TrailingSilenceSamples = SampleRate * TrailingSilenceMilliseconds / 1000;
     private const int MaxUtteranceSamples = SampleRate * 15;        // Hard cap so we always flush eventually.
     private const int MinUtteranceSamples = SampleRate * 3 / 10;    // Ignore blips shorter than ~0.3s.
+
+    /// <summary>The active silence duration used to finalize an utterance, for /version reporting.</summary>
+    public static int ActiveTrailingSilenceMilliseconds => TrailingSilenceMilliseconds;
+
+    private static int ReadTrailingSilenceMilliseconds()
+    {
+        var value = Environment.GetEnvironmentVariable("STT_TRAILING_SILENCE_MS");
+        return int.TryParse(value, out var milliseconds) && milliseconds >= 200 && milliseconds <= 2000
+            ? milliseconds
+            : DefaultTrailingSilenceMilliseconds;
+    }
 
     private readonly List<short> _utterance = new();
     private bool _hasSpeech;
