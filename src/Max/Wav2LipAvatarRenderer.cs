@@ -339,14 +339,21 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
 
         try
         {
+            var tickClock = _speaking ? System.Diagnostics.Stopwatch.StartNew() : null;
+            var mouthClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var mouth = NextMouth();
+            if (mouthClock != null) BenchMetrics.Record("render_mouth", mouthClock.Elapsed.TotalMilliseconds);
+            var composeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var bgr = RenderFrame(mouth, _frameIdx);
+            if (composeClock != null) BenchMetrics.Record("render_compose", composeClock.Elapsed.TotalMilliseconds);
             _frameIdx++;
 
             long encodeStarted = System.Diagnostics.Stopwatch.GetTimestamp();
+            var encodeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var encoded = _videoEncoder.EncodeVideo(WIDTH, HEIGHT, bgr, VideoPixelFormatsEnum.Bgr,
                 _formatManager.SelectedFormat.Codec);
             RecordDuration(encodeStarted, ref _encodeCount, ref _encodeTicks, ref _maximumEncodeTicks);
+            if (encodeClock != null) BenchMetrics.Record("render_encode", encodeClock.Elapsed.TotalMilliseconds);
             if (encoded != null)
             {
                 // Truthful RTP durations: a fixed 3600/frame lets the video RTP clock fall
@@ -361,6 +368,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
                 Interlocked.Increment(ref _emittedFrames);
                 OnVideoSourceEncodedSample?.Invoke(durationRtpTS, encoded);
             }
+            if (tickClock != null) BenchMetrics.Record("render_tick", tickClock.Elapsed.TotalMilliseconds);
         }
         catch (Exception excp)
         {
@@ -420,6 +428,8 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
                 long inferenceStarted = System.Diagnostics.Stopwatch.GetTimestamp();
                 _lastMouth = Infer(mel, (int)(frame * MEL_PER_FRAME));
                 RecordDuration(inferenceStarted, ref _inferenceCount, ref _inferenceTicks, ref _maximumInferenceTicks);
+                BenchMetrics.Record("wav2lip_infer",
+                    StopwatchTicksToMilliseconds(System.Diagnostics.Stopwatch.GetTimestamp() - inferenceStarted));
 
                 double lateMs = Math.Max(0, _speechClock.Elapsed.TotalMilliseconds - frame * (1000.0 / FPS));
                 long lateTicks = MillisecondsToStopwatchTicks(lateMs);
@@ -429,6 +439,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer, IAvatarRenderBenchm
 
                 if (Interlocked.Exchange(ref _firstMouthFrameReported, 1) == 0)
                 {
+                    BenchMetrics.Record("lipsync_first_mouth", _speechClock.Elapsed.TotalMilliseconds);
                     FirstMouthFrameProduced?.Invoke();
                 }
             }

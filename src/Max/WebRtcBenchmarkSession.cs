@@ -42,6 +42,7 @@ public sealed class WebRtcBenchmarkSession
             _receivedAudioSumSquares = 0;
             _receivedAudioPeak = 0;
             _renderer?.ResetBenchmarkCounters();
+            BenchMetrics.SetBenchmarkEventSink(Record);
         }
     }
 
