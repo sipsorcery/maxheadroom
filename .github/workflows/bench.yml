@@ -7,19 +7,20 @@ on:
   workflow_dispatch:
     inputs:
       target:
-        description: Base URL of the HTTP/API bench instance
+        description: Base URL measured by both the HTTP/API and browser/WebRTC suites
         default: https://max-claude.sipsorcery.com
       iterations:
         description: Number of HTTP /ask prompts
         default: "5"
-      webrtc_target:
-        description: Base URL of the browser/WebRTC bench instance
-        default: https://max-codex.sipsorcery.com
       webrtc_iterations:
         description: Number of deterministic WebRTC speech transitions
         default: "3"
+      deployment:
+        description: Optional experiment label (defaults to the target's reported branch)
+        default: ""
+        type: string
       webrtc_llm_model:
-        description: LLM model name configured on the WebRTC target
+        description: LLM model name configured on the target
         default: mistral-3-14B
         type: string
   schedule:
@@ -52,9 +53,15 @@ jobs:
         run: |
           TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
           ITERATIONS="${{ github.event.inputs.iterations || '5' }}"
+          VERSION="$(curl --fail --silent --show-error "$TARGET/version")"
+          DEPLOYED_SHA="$(node -e 'console.log(JSON.parse(process.argv[1]).sha || "unknown")' "$VERSION")"
+          DETECTED_BRANCH="$(node -e 'console.log(JSON.parse(process.argv[1]).branch || "unknown")' "$VERSION")"
+          DEPLOYMENT="${{ github.event.inputs.deployment }}"
+          DEPLOYMENT="${DEPLOYMENT:-$DETECTED_BRANCH}"
+          LABEL="${DEPLOYMENT}-${DEPLOYED_SHA:0:8}"
           dotnet run --project src/MaxBench -c Release -- all \
             --target "$TARGET" --iterations "$ITERATIONS" --json bench-results.json \
-            --label "${GITHUB_SHA::8}" | tee bench-summary.md
+            --label "$LABEL" | tee bench-summary.md
           cat bench-summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload HTTP/API results
         if: always()
@@ -68,6 +75,8 @@ jobs:
 
   webrtc:
     name: Browser WebRTC suite
+    needs: http
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -98,10 +107,13 @@ jobs:
             -af "apad=pad_dur=0.8" -t 3.85 -ar 48000 -ac 1 bench-webrtc/prompt.wav
       - name: Run deterministic browser/WebRTC transitions
         run: |
-          TARGET="${{ github.event.inputs.webrtc_target || 'https://max-codex.sipsorcery.com' }}"
+          TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
           ITERATIONS="${{ github.event.inputs.webrtc_iterations || '3' }}"
           mkdir -p bench-webrtc/runs
           curl --fail --silent --show-error "$TARGET/version" > bench-webrtc/version.json
+          DETECTED_BRANCH="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("bench-webrtc/version.json")).branch || "unknown")')"
+          DEPLOYMENT="${{ github.event.inputs.deployment }}"
+          DEPLOYMENT="${DEPLOYMENT:-$DETECTED_BRANCH}"
           INPUTS=()
           for i in $(seq 1 "$ITERATIONS"); do
             node benchmarks/webrtc/run.mjs --url "$TARGET" --audio bench-webrtc/prompt.wav \
@@ -113,7 +125,8 @@ jobs:
             "${INPUTS[@]}" \
             --run-out bench-webrtc/webrtc-result.json --history-dir bench-webrtc/generated-history \
             --run-id "webrtc-${GITHUB_RUN_ID}" --commit-sha "$DEPLOYED_SHA" \
-            --target "$TARGET" --deployment codex --runner github-actions-ubuntu \
+            --target "$TARGET" --deployment "$DEPLOYMENT" \
+            --runner github-actions-ubuntu \
             --llm-model "${{ github.event.inputs.webrtc_llm_model || 'mistral-3-14B' }}"
       - name: Upload browser/WebRTC results
         if: always()
@@ -149,8 +162,9 @@ jobs:
           git fetch origin bench-data
           git worktree add ../bench-data origin/bench-data
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          HTTP_LABEL="$(node -e 'const r=JSON.parse(require("fs").readFileSync("artifacts/http/bench-results.json")); console.log((r.label || "unknown").replace(/[^A-Za-z0-9._-]/g, "-"))')"
           WEBRTC_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("artifacts/webrtc/webrtc-result.json")).source.commitSha.slice(0, 8))')"
-          cp artifacts/http/bench-results.json "../bench-data/runs/${STAMP}-http-${GITHUB_SHA::8}.json"
+          cp artifacts/http/bench-results.json "../bench-data/runs/${STAMP}-http-${HTTP_LABEL}.json"
           cp artifacts/webrtc/webrtc-result.json "../bench-data/runs/${STAMP}-webrtc-${WEBRTC_SHA}.json"
           for seed in benchmarks/webrtc/history-seed/*.json; do
             destination="../bench-data/runs/webrtc-$(basename "$seed")"
