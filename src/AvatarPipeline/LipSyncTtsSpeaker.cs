@@ -75,6 +75,10 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
             var synthClock = Stopwatch.StartNew();
             var (pcm, sampleRate) = await SynthesiseAsync(text).ConfigureAwait(false);
             BenchMetrics.Record("tts_synth", synthClock.Elapsed.TotalMilliseconds, $"chars={text.Length}");
+            // For blocking engines the first playable audio IS the completed synthesis;
+            // recorded under the same name the streaming engines use so the history
+            // table compares time-to-first-audio across engines directly.
+            BenchMetrics.Record("tts_first_chunk", synthClock.Elapsed.TotalMilliseconds);
             if (pcm == null || pcm.Length == 0)
             {
                 logger.LogError("[{Engine}] produced no audio for \"{Text}\".", EngineName, text);

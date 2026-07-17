@@ -49,6 +49,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
@@ -68,6 +69,11 @@ class Program
 {
     private static Microsoft.Extensions.Logging.ILogger _logger = NullLogger.Instance;
     private static readonly ConcurrentDictionary<Guid, Channel<string>> _uiEventClients = new();
+    private static readonly ConcurrentDictionary<string, WebRtcBenchmarkSession> _webRtcBenchmarkSessions = new(StringComparer.Ordinal);
+
+    /// <summary>Process-lifetime recognizer for /bench/stt; never disposed (see endpoint note).</summary>
+    private static readonly Lazy<SherpaSpeechRecognizer> _benchRecognizer =
+        new(() => new SherpaSpeechRecognizer(), System.Threading.LazyThreadSafetyMode.ExecutionAndPublication);
 
     // The demo drives a single connected viewer.
     private static IAvatarRenderer _videoSource;
@@ -75,6 +81,14 @@ class Program
     private static IAvatarSpeaker _speaker;
     private static ISpeechRecognizer _recognizer;
     private static ILlmClient _llm;
+
+    // Barge-in: monotonic "current turn" counter. Every new thing to say (a typed /ask,
+    // a /say, or a recognised utterance) starts a turn, which immediately hard-stops
+    // whatever audio is currently playing and supersedes any in-flight reply - without
+    // this, the STT VAD segmenting a user's short backchannel words ("Yeah.", "Okay.")
+    // while Max is still mid-reply spawned independent, uncoordinated LLM+speech turns
+    // that interleaved on the shared audio track (issue #27).
+    private static int _turnVersion;
 
     private static string _sherpaModelDir;
     private static string _elevenLabsKey;
@@ -234,6 +248,13 @@ class Program
         app.UseStaticFiles();
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
+        app.MapGet("/version", () => Results.Json(new
+        {
+            branch = Environment.GetEnvironmentVariable("GIT_BRANCH") ?? "unknown",
+            sha = Environment.GetEnvironmentVariable("GIT_SHA") ?? "unknown",
+            description = Environment.GetEnvironmentVariable("BUILD_DESCRIPTION") ?? "",
+            llmModel = DescribeLlmModel(),
+        }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
 
@@ -242,6 +263,7 @@ class Program
             var text = await ReadBody(request);
             var notReady = SpeakerNotReady();
             if (notReady != null) { return notReady; }
+            BeginTurn();
             _ = _speaker.SpeakAsync(text);
             return Results.Ok();
         });
@@ -258,7 +280,7 @@ class Program
 
         // Bench endpoints are opt-in (BENCH_ENDPOINTS=true) so production deployments
         // don't expose internals; the claude bench instance enables them via config.
-        if (string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase))
+        if (BenchmarkEndpointEnabled())
         {
             app.MapGet("/bench/metrics", () => Results.Json(new
             {
@@ -289,9 +311,12 @@ class Program
                     return Results.BadRequest($"Unsupported WAV: {excp.Message}");
                 }
 
+                // One recognizer for the process lifetime. Creating and disposing one per
+                // request re-runs sherpa's native teardown alongside any WebRTC session
+                // recognizer being finalized, which has segfaulted the pod (exit 139)
+                // when a bench pass closed its session right before calling this.
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                using var recognizer = new SherpaSpeechRecognizer();
-                var transcript = await recognizer.TestTranscribeAsync(pcm8k);
+                var transcript = await _benchRecognizer.Value.TestTranscribeAsync(pcm8k);
                 return Results.Json(new
                 {
                     transcript,
@@ -299,10 +324,62 @@ class Program
                     audioMs = pcm8k.Length / 8,
                 });
             });
+
+            app.MapPost("/benchmark/webrtc/session", () =>
+            {
+                var id = Guid.NewGuid().ToString("N");
+                _webRtcBenchmarkSessions[id] = new WebRtcBenchmarkSession(id);
+                return Results.Json(new { sessionId = id });
+            });
+
+            app.MapPost("/benchmark/webrtc/{id}/start", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryGetValue(id, out var session)) return Results.NotFound();
+                session.Arm();
+                return Results.Ok();
+            });
+
+            app.MapPost("/benchmark/webrtc/{id}/speech-end", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryGetValue(id, out var session)) return Results.NotFound();
+                session.Record("speech_end");
+                return Results.Ok();
+            });
+
+            app.MapGet("/benchmark/webrtc/{id}", (string id) =>
+                _webRtcBenchmarkSessions.TryGetValue(id, out var session)
+                    ? Results.Json(session.Snapshot())
+                    : Results.NotFound());
+
+            app.MapDelete("/benchmark/webrtc/{id}", (string id) =>
+            {
+                if (!_webRtcBenchmarkSessions.TryRemove(id, out _)) return Results.NotFound();
+                BenchMetrics.ClearBenchmarkEventSink();
+                return Results.NoContent();
+            });
         }
 
         await app.RunAsync();
     }
+
+    /// <summary>
+    /// Starts a new turn: bumps the turn counter (so any in-flight reply's queued/streaming
+    /// speech becomes stale and self-abandons - see <see cref="IsCurrentTurn"/>) and hard-stops
+    /// whatever audio is currently playing via <see cref="AudioExtrasSource.CancelSendAudioFromStream"/>,
+    /// which resolves the in-flight <c>SpeakAsync</c> call immediately (it no-ops harmlessly when
+    /// nothing is playing). The result is a barge-in: the newest thing to say always wins,
+    /// audibly, right away, instead of interleaving with whatever was already talking.
+    /// </summary>
+    private static int BeginTurn()
+    {
+        int turn = Interlocked.Increment(ref _turnVersion);
+        _audioSource?.CancelSendAudioFromStream();
+        return turn;
+    }
+
+    /// <summary>True while <paramref name="turn"/> (from <see cref="BeginTurn"/>) is still the
+    /// newest turn - false once a later call to <see cref="BeginTurn"/> has superseded it.</summary>
+    private static bool IsCurrentTurn(int turn) => Volatile.Read(ref _turnVersion) == turn;
 
     /// <summary>
     /// Runs a prompt through the LLM and speaks the reply, streaming sentence-by-sentence so the
@@ -312,7 +389,7 @@ class Program
     /// finishes in the background. Shared by the /ask endpoint and the speech recogniser, so typing
     /// a prompt and speaking one drive the exact same path.
     /// </summary>
-    private static async Task<string> AskAsync(string prompt)
+    private static async Task<string> AskAsync(string prompt, WebRtcBenchmarkSession benchmarkSession = null)
     {
         // Capture the speaker so a mid-stream disconnect (which nulls _speaker) can't throw inside
         // the background consumer below; bail quietly if the avatar can't speak right now.
@@ -322,6 +399,7 @@ class Program
             return string.Empty;
         }
 
+        int myTurn = BeginTurn();
         var askClock = System.Diagnostics.Stopwatch.StartNew();
 
         // A streaming speaker consumes the LLM token stream directly over one WebSocket; tee the
@@ -333,17 +411,25 @@ class Program
             {
                 await foreach (var sentence in _llm.StreamReplyAsync(prompt))
                 {
+                    // A newer turn has started (barge-in) - stop generating/yielding for this
+                    // one instead of racing its speech against the new turn's.
+                    if (!IsCurrentTurn(myTurn)) { yield break; }
+
                     if (streamed.Length == 0)
                     {
                         BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                        benchmarkSession?.Record("llm_first_token");
                     }
                     streamed.Append(sentence).Append(' ');
-                    yield return sentence;
+                    // Speak sanitized text (no markdown for the TTS to verbalise); keep the
+                    // raw reply for the return value / speech log.
+                    yield return LlmShared.SanitizeForSpeech(sentence);
                 }
                 BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
             }
 
             await streaming.SpeakStreamAsync(Tee());
+            benchmarkSession?.Record("audio_complete");
             var streamedText = streamed.ToString().Trim();
             _logger.LogInformation("LLM reply: {Reply}", streamedText);
             return streamedText;
@@ -356,6 +442,10 @@ class Program
             {
                 await foreach (var sentence in sentences.Reader.ReadAllAsync())
                 {
+                    // A newer turn has started (barge-in) - drop this stale sentence instead
+                    // of speaking it. Keep draining rather than stopping outright so the
+                    // channel (and its writer above) can still complete normally.
+                    if (!IsCurrentTurn(myTurn)) { continue; }
                     await speaker.SpeakAsync(sentence);
                 }
             }
@@ -368,15 +458,27 @@ class Program
         var reply = new StringBuilder();
         await foreach (var sentence in _llm.StreamReplyAsync(prompt))
         {
+            // Stop generating/enqueuing for a superseded turn - no point paying for more
+            // completion tokens nobody will ever hear.
+            if (!IsCurrentTurn(myTurn)) { break; }
+
             if (reply.Length == 0)
             {
                 BenchMetrics.Record("llm_first_sentence", askClock.Elapsed.TotalMilliseconds);
+                benchmarkSession?.Record("llm_first_token");
             }
             reply.Append(sentence).Append(' ');
-            await sentences.Writer.WriteAsync(sentence);
+            // Speak sanitized text; keep the raw reply for the return value / speech log.
+            await sentences.Writer.WriteAsync(LlmShared.SanitizeForSpeech(sentence));
         }
         sentences.Writer.Complete();
         BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
+
+        if (benchmarkSession != null)
+        {
+            await speakTask.ConfigureAwait(false);
+            benchmarkSession.Record("audio_complete");
+        }
 
         var text = reply.ToString().Trim();
         _logger.LogInformation("LLM reply: {Reply}", text);
@@ -387,12 +489,13 @@ class Program
     /// Handles microphone input separately from typed /ask requests so the browser activity
     /// drawer can show the STT result followed by the reply generated for that utterance.
     /// </summary>
-    private static async Task HandleRecognizedSpeechAsync(string text)
+    private static async Task HandleRecognizedSpeechAsync(string text, WebRtcBenchmarkSession benchmarkSession = null)
     {
+        benchmarkSession?.Record("stt_final");
         PublishUiEvent("stt", text);
         try
         {
-            var reply = await AskAsync(text);
+            var reply = await AskAsync(text, benchmarkSession);
             if (!string.IsNullOrWhiteSpace(reply))
             {
                 PublishUiEvent("llm", reply);
@@ -456,7 +559,14 @@ class Program
         var sdpOffer = await ReadBody(request);
         _logger.LogDebug("Received SDP offer:\n{offer}", sdpOffer);
 
-        var pc = CreatePeerConnection();
+        WebRtcBenchmarkSession benchmarkSession = null;
+        if (BenchmarkEndpointEnabled() &&
+            request.Headers.TryGetValue("X-Max-Benchmark-Session", out var benchmarkIds))
+        {
+            _webRtcBenchmarkSessions.TryGetValue(benchmarkIds.ToString(), out benchmarkSession);
+        }
+
+        var pc = CreatePeerConnection(benchmarkSession);
 
         var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdpOffer, type = RTCSdpType.offer });
         if (result != SetDescriptionResultEnum.OK)
@@ -472,7 +582,7 @@ class Program
         return Results.Text(pc.localDescription.sdp.ToString());
     }
 
-    private static RTCPeerConnection CreatePeerConnection()
+    private static RTCPeerConnection CreatePeerConnection(WebRtcBenchmarkSession benchmarkSession = null)
     {
         var config = new RTCConfiguration
         {
@@ -488,6 +598,7 @@ class Program
         var pc = new RTCPeerConnection(config);
 
         IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder());
+        benchmarkSession?.Attach(videoSource);
         var videoTrack = new MediaStreamTrack(videoSource.GetVideoSourceFormats(), MediaStreamStatusEnum.SendOnly);
         pc.addTrack(videoTrack);
         videoSource.OnVideoSourceEncodedSample += pc.SendVideo;
@@ -517,7 +628,7 @@ class Program
             recognizer = CreateRecognizer();
             if (recognizer != null)
             {
-                recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text);
+                recognizer.OnRecognized += text => _ = HandleRecognizedSpeechAsync(text, benchmarkSession);
 
                 var micDecoder = new AudioEncoder();
                 var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);
@@ -525,7 +636,9 @@ class Program
                 {
                     try
                     {
-                        recognizer.Write(micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat));
+                        var pcm = micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat);
+                        benchmarkSession?.RecordReceivedAudio(pcm);
+                        recognizer.Write(pcm);
                     }
                     catch (Exception excp)
                     {
@@ -554,7 +667,10 @@ class Program
                         await videoSource.StartVideo();
                         if (speaker != null)
                         {
-                            _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            if (benchmarkSession == null)
+                            {
+                                _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                            }
                         }
                         else
                         {
@@ -606,6 +722,10 @@ class Program
         }
         return null;
     }
+
+    private static bool BenchmarkEndpointEnabled() =>
+        string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase) ||
+        string.Equals(Environment.GetEnvironmentVariable("BENCHMARK_ENDPOINT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Builds the avatar renderer (the swappable IAvatarRenderer): the in-process Wav2Lip head
@@ -811,6 +931,19 @@ class Program
             Environment.GetEnvironmentVariable("LLM_ENDPOINT"),
             Environment.GetEnvironmentVariable("LLM_MODEL"),
             Environment.GetEnvironmentVariable("LLM_API_KEY"));
+    }
+
+    /// <summary>The LLM actually in play, for /version and the bench: the in-process GGUF
+    /// filename, the configured endpoint model, or "not configured" (prompt-echo fallback).</summary>
+    private static string DescribeLlmModel()
+    {
+        var gguf = Environment.GetEnvironmentVariable("LLM_GGUF");
+        if (!string.IsNullOrWhiteSpace(gguf) && File.Exists(gguf))
+        {
+            return $"local:{Path.GetFileName(gguf)}";
+        }
+        var model = Environment.GetEnvironmentVariable("LLM_MODEL");
+        return string.IsNullOrWhiteSpace(model) ? "not configured" : model;
     }
 
     /// <summary>True if any TTS engine is configured (ElevenLabs or sherpa-onnx).</summary>

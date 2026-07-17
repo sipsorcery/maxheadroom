@@ -219,6 +219,11 @@ docker build `
   -t sipsorcery/webrtc-max-headroom:local .
 ```
 
+Pass `--build-arg GIT_BRANCH=<branch> --build-arg GIT_SHA=<short-sha>` (and
+optionally `BUILD_DESCRIPTION`) to have the running instance report its build
+on the `/version` endpoint and as a small badge on the web page - useful when
+more than one instance/branch is deployed side by side.
+
 The supplied Compose file maps the conventional `C:\tools` model tree into the
 container and configures all of the Linux model paths. From this directory:
 
