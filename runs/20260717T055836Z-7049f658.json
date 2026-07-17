@@ -1,0 +1,26 @@
+{
+  "target": "https://max-claude.sipsorcery.com",
+  "utc": "2026-07-17T05:57:54.2539627Z",
+  "mode": "all",
+  "label": "7049f658",
+  "ask": {
+    "iterations": 5,
+    "failures": 0,
+    "client_ms": [
+      3555.8,
+      1116.3,
+      1307.2,
+      2020.8,
+      1630.1
+    ],
+    "first_audio_ms": [
+      2022,
+      3815,
+      593,
+      242,
+      1555
+    ],
+    "server_aggregates": null
+  },
+  "server_metrics": null
+}
