@@ -65,7 +65,14 @@ public sealed class SherpaTtsSpeaker : LipSyncTtsSpeaker, IDisposable
         config.Model.Vits.Model = modelPath;
         config.Model.Vits.Tokens = tokensPath;
         config.Model.Vits.DataDir = dataDir;
-        config.Model.NumThreads = Math.Clamp(Environment.ProcessorCount / 2, 1, 4);
+        // Use every core the runtime says we have (in a container that's the cgroup CPU
+        // limit, e.g. 3 on the 3000m pod - ProcessorCount/2 left it synthesising on a
+        // single thread there). TTS is the latency bottleneck and nothing else contends
+        // for CPU while an utterance is being generated; SHERPA_TTS_THREADS overrides.
+        config.Model.NumThreads =
+            int.TryParse(Environment.GetEnvironmentVariable("SHERPA_TTS_THREADS"), out var threads)
+                ? Math.Clamp(threads, 1, 16)
+                : Math.Clamp(Environment.ProcessorCount, 1, 8);
         config.Model.Provider = "cpu";   // VITS synthesis is comfortably real-time on CPU.
 
         var tts = new OfflineTts(config);

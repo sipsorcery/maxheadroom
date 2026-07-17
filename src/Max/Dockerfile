@@ -3,6 +3,13 @@
 ARG DOTNET_RUNTIME_VERSION=8.0
 ARG DOTNET_SDK_VERSION=10.0
 
+# Surfaced by the /version endpoint and the web page's branch/commit badge.
+# Pass at build time, e.g.:
+#   --build-arg GIT_BRANCH=claude/maxheadroom --build-arg GIT_SHA=$(git rev-parse --short=8 HEAD)
+ARG GIT_BRANCH=unknown
+ARG GIT_SHA=unknown
+ARG BUILD_DESCRIPTION=
+
 # FFmpeg.AutoGen 8.1 binds to libavcodec.so.62 (FFmpeg 8). Debian Bookworm's
 # ffmpeg package is 5.x, so use a matching, checksum-verified shared build.
 FROM debian:bookworm-slim AS ffmpeg
@@ -33,6 +40,11 @@ RUN dotnet restore src/Max/Max.csproj \
 
 FROM mcr.microsoft.com/dotnet/aspnet:${DOTNET_RUNTIME_VERSION}-bookworm-slim AS runtime
 
+# Re-declare to bring the global ARGs into this stage (Docker scoping rule).
+ARG GIT_BRANCH=unknown
+ARG GIT_SHA=unknown
+ARG BUILD_DESCRIPTION
+
 # SkiaSharp, sherpa-onnx, onnxruntime and llama.cpp use these native libraries.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
@@ -51,6 +63,9 @@ COPY --from=build --chown=app:app /app/publish /app
 
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_EnableDiagnostics=0 \
+    GIT_BRANCH=${GIT_BRANCH} \
+    GIT_SHA=${GIT_SHA} \
+    BUILD_DESCRIPTION=${BUILD_DESCRIPTION} \
     PATH=/opt/ffmpeg/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LD_LIBRARY_PATH=/opt/ffmpeg/lib:/app \
     SHERPA_MODEL_DIR=/models/sherpa-tts/vits-piper-en_US-ryan-high \
