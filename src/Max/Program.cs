@@ -948,7 +948,16 @@ class Program
         }
         var rendererKind = Environment.GetEnvironmentVariable("AVATAR_RENDERER");
         if (string.IsNullOrWhiteSpace(rendererKind)) { rendererKind = Wav2LipAvatarRenderer.FilesPresent() ? "wav2lip" : "cartoon"; }
-        return new { llmModel = DescribeLlmModel(), ttsEngine, ttsVoice, sttEngine, sttModel, avatarRenderer = rendererKind };
+        return new
+        {
+            llmModel = DescribeLlmModel(),
+            ttsEngine,
+            ttsVoice,
+            sttEngine,
+            sttModel,
+            sttTrailingSilenceMs = SpeechRecognizer.ActiveTrailingSilenceMilliseconds,
+            avatarRenderer = rendererKind,
+        };
         static string DirName(string path) => string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));
     }
 
