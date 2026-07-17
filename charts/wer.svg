@@ -14,35 +14,35 @@
 <line x1="70" y1="44.0" x2="880" y2="44.0" stroke="#e5e5e5"/>
 <text x="64" y="48.0" font-size="11" fill="#666" text-anchor="end">4%</text>
 <text x="70.0" y="342" font-size="11" fill="#666" text-anchor="start">07-16 16:02</text>
-<text x="475.0" y="342" font-size="11" fill="#666" text-anchor="middle">07-17 13:17</text>
-<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-17 19:42</text>
-<polyline points="70.0,64.7 97.0,64.7 124.0,64.7 151.0,64.7 178.0,64.7 205.0,64.7 259.0,64.7 286.0,64.7 313.0,64.7 421.0,64.7 448.0,64.7 475.0,64.7 502.0,64.7 529.0,64.7 556.0,64.7 583.0,64.7 610.0,64.7 637.0,64.7 664.0,64.7 691.0,64.7 718.0,64.7 745.0,64.7 772.0,64.7 799.0,64.7 826.0,64.7 853.0,64.7" fill="none" stroke="#d62728" stroke-width="2"/>
+<text x="488.1" y="342" font-size="11" fill="#666" text-anchor="middle">07-17 14:10</text>
+<text x="880.0" y="342" font-size="11" fill="#666" text-anchor="end">07-17 19:46</text>
+<polyline points="70.0,64.7 96.1,64.7 122.3,64.7 148.4,64.7 174.5,64.7 200.6,64.7 252.9,64.7 279.0,64.7 305.2,64.7 409.7,64.7 435.8,64.7 461.9,64.7 488.1,64.7 514.2,64.7 540.3,64.7 566.5,64.7 592.6,64.7 618.7,64.7 644.8,64.7 671.0,64.7 697.1,64.7 723.2,64.7 749.4,64.7 775.5,64.7 801.6,64.7 827.7,64.7" fill="none" stroke="#d62728" stroke-width="2"/>
 <circle cx="70.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="97.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="124.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="151.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="178.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="205.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="259.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="286.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="313.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="421.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="448.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="475.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="502.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="529.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="556.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="583.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="610.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="637.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="664.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="691.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="718.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="745.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="772.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="799.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="826.0" cy="64.7" r="3" fill="#d62728"/>
-<circle cx="853.0" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="96.1" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="122.3" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="148.4" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="174.5" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="200.6" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="252.9" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="279.0" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="305.2" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="409.7" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="435.8" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="461.9" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="488.1" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="514.2" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="540.3" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="566.5" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="592.6" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="618.7" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="644.8" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="671.0" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="697.1" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="723.2" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="749.4" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="775.5" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="801.6" cy="64.7" r="3" fill="#d62728"/>
+<circle cx="827.7" cy="64.7" r="3" fill="#d62728"/>
 <rect x="70.0" y="358" width="10" height="10" fill="#d62728"/>
 <text x="84.0" y="367" font-size="11" fill="#333">WER</text>
 </svg>
