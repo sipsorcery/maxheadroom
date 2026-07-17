@@ -26,7 +26,8 @@ static class History
         DateTimeOffset Utc, string Label, string LlmModel,
         double? FirstAudioP50, double? LlmTtftP50, double? LlmFirstP50, double? LlmCompleteP50,
         double? TtsFirstChunkP50, double? TtsSynthP50, double? LipsyncFirstP50,
-        double? RenderTickP95, double? Wav2LipP50, double? Wer);
+        double? RenderTickP95, double? RenderMouthP50, double? RenderComposeP50,
+        double? Wav2LipP50, double? Wer);
 
     public static void Generate(string historyDir)
     {
@@ -55,6 +56,15 @@ static class History
         File.WriteAllText(Path.Combine(historyDir, "charts", "wer.svg"), BuildChart(
             "STT word error rate (%) — lower is better", runs,
             [("WER", "#d62728", r => r.Wer * 100 is double w ? w : null)], "%"));
+        // Own chart/scale: render-loop stages are tens of ms, invisible on the latency
+        // chart's multi-second axis. The 25fps budget line (40ms) is drawn for reference.
+        File.WriteAllText(Path.Combine(historyDir, "charts", "render.svg"), BuildChart(
+            "Render loop per-frame cost (ms, p50 unless noted) — 25fps budget is 40ms", runs,
+            [
+                ("render tick (p95)", "#8c564b", r => r.RenderTickP95),
+                ("render mouth (wav2lip)", "#1f77b4", r => r.RenderMouthP50),
+                ("render compose (SkiaSharp)", "#2ca02c", r => r.RenderComposeP50),
+            ], "ms", budgetLine: 40));
 
         Console.WriteLine($"history: {runs.Count} runs -> {historyDir}/history.md + charts/");
     }
@@ -78,6 +88,8 @@ static class History
                 Num(agg?["tts_synth"]?["p50"]),
                 Num(srv?["lipsync_first_mouth"]?["p50"]),
                 Num(srv?["render_tick"]?["p95"]),
+                Num(srv?["render_mouth"]?["p50"]),
+                Num(srv?["render_compose"]?["p50"]),
                 Num(srv?["wav2lip_infer"]?["p50"]),
                 Num(j["stt"]?["overall_wer"]));
         }
@@ -110,13 +122,16 @@ static class History
         sb.AppendLine();
         sb.AppendLine("![wer](charts/wer.svg)");
         sb.AppendLine();
-        sb.AppendLine("| run (UTC) | label | LLM model | first audio (e2e) | llm ttft | llm first | tts first chunk | lipsync first | render tick p95 | WER |");
-        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|");
+        sb.AppendLine("![render](charts/render.svg)");
+        sb.AppendLine();
+        sb.AppendLine("| run (UTC) | label | LLM model | first audio (e2e) | llm ttft | llm first | tts first chunk | lipsync first | render tick p95 | render mouth | render compose | WER |");
+        sb.AppendLine("|---|---|---|---|---|---|---|---|---|---|---|---|");
         foreach (var r in Enumerable.Reverse(runs))
         {
             sb.AppendLine(
                 $"| {r.Utc:yyyy-MM-dd HH:mm} | {r.Label} | {r.LlmModel} | {Fmt(r.FirstAudioP50)} | {Fmt(r.LlmTtftP50)} | " +
                 $"{Fmt(r.LlmFirstP50)} | {Fmt(r.TtsFirstChunkP50)} | {Fmt(r.LipsyncFirstP50)} | {Fmt(r.RenderTickP95)} | " +
+                $"{Fmt(r.RenderMouthP50)} | {Fmt(r.RenderComposeP50)} | " +
                 $"{(r.Wer is double w ? w.ToString("P1", CultureInfo.InvariantCulture) : "—")} |");
         }
         sb.AppendLine();
@@ -130,16 +145,21 @@ static class History
         sb.AppendLine("- **llm first** — server-side time from prompt received to the first *sentence* of the LLM's reply becoming available for speech (`llm_first_sentence`). The gap above *llm ttft* is sentence-chunking cost - the wait for the whole first sentence to generate.");
         sb.AppendLine("- **tts first chunk** — time from an utterance starting until the first playable audio exists (`tts_first_chunk`). For blocking engines (sherpa) this equals whole-sentence synthesis; for streaming engines (ElevenLabs) it is the first websocket chunk. Program target <300ms. (Full synth cost remains in the run JSON as `tts_synth`.)");
         sb.AppendLine("- **lipsync first** — time from an utterance's audio being handed to the avatar renderer until the first lip-synced (Wav2Lip) mouth frame is ready (`lipsync_first_mouth`). Governs how quickly the avatar's mouth starts moving once it begins speaking.");
-        sb.AppendLine("- **render tick p95** — 95th percentile of the whole per-frame render cost while speaking: mouth inference + frame compose + video encode (`render_tick`). The budget at 25fps is 40ms; a p95 above that means dropped frames and a laggy face. (Per-inference `wav2lip_infer` remains in the run JSON.)");
+        sb.AppendLine("- **render tick p95** — 95th percentile of the whole per-frame render cost while speaking: mouth inference + frame compose + video encode (`render_tick`). The budget at 25fps is 40ms; a p95 above that means dropped frames and a laggy face.");
+        sb.AppendLine("- **render mouth** — the render tick's mouth-inference stage (`render_mouth`): the Wav2Lip ONNX call (or reusing the last mouth when no new audio window is ready yet). Tracks `wav2lip_infer` closely; currently the single largest render-tick cost.");
+        sb.AppendLine("- **render compose** — the render tick's SkiaSharp compositing stage (`render_compose`): matte blend, VHS grade, head-sway warp, blinks. All per-pixel managed code today - the second-largest render-tick cost and a live optimization target (see the [render chart](charts/render.svg) and the 40ms budget line).");
         sb.AppendLine("- **WER** — *word error rate* of speech-to-text. The bench sends a fixed reference audio clip (Harvard sentences, `bench/corpus.json`) through the same offline recogniser the live WebRTC audio path uses, then scores the transcript against the known-correct reference text. Lower is better; 0% is a perfect transcript.");
         return sb.ToString();
 
         static string Fmt(double? v) => v is double d ? d.ToString("F0", CultureInfo.InvariantCulture) : "—";
     }
 
-    /// <summary>Minimal dependency-free SVG line chart: one polyline per series over run index.</summary>
+    /// <summary>Minimal dependency-free SVG line chart: one polyline per series over run index.
+    /// <paramref name="budgetLine"/> draws an optional dashed reference line (e.g. a frame
+    /// budget) at that y-value.</summary>
     private static string BuildChart(string title, List<Run> runs,
-        (string name, string color, Func<Run, double?> pick)[] series, string yUnit)
+        (string name, string color, Func<Run, double?> pick)[] series, string yUnit,
+        double? budgetLine = null)
     {
         const int W = 900, H = 380, L = 70, R = 20, T = 44, B = 56;
         int plotW = W - L - R, plotH = H - T - B;
@@ -147,7 +167,8 @@ static class History
         var points = series
             .Select(s => (s.name, s.color, values: runs.Select(s.pick).ToArray()))
             .ToArray();
-        double yMax = Math.Max(1, points.SelectMany(p => p.values).Where(v => v != null).Select(v => v!.Value).DefaultIfEmpty(1).Max()) * 1.08;
+        double dataMax = points.SelectMany(p => p.values).Where(v => v != null).Select(v => v!.Value).DefaultIfEmpty(1).Max();
+        double yMax = Math.Max(1, Math.Max(dataMax, budgetLine ?? 0)) * 1.08;
 
         var sb = new StringBuilder();
         sb.AppendLine($"<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{W}\" height=\"{H}\" viewBox=\"0 0 {W} {H}\" font-family=\"sans-serif\">");
@@ -165,6 +186,13 @@ static class History
 
         double X(int i) => runs.Count == 1 ? L + plotW / 2.0 : L + plotW * i / (double)(runs.Count - 1);
         double Y(double v) => T + plotH - plotH * v / yMax;
+
+        if (budgetLine is double budget)
+        {
+            double by = Y(budget);
+            sb.AppendLine($"<line x1=\"{L}\" y1=\"{by:F1}\" x2=\"{W - R}\" y2=\"{by:F1}\" stroke=\"#d62728\" stroke-width=\"1.5\" stroke-dasharray=\"6,4\"/>");
+            sb.AppendLine($"<text x=\"{W - R - 4}\" y=\"{by - 5:F1}\" font-size=\"11\" fill=\"#d62728\" text-anchor=\"end\">budget {budget:F0}{Esc(yUnit)}</text>");
+        }
 
         // X labels: first, middle and last run timestamps (edge labels anchored inward
         // so they don't clip outside the canvas).
