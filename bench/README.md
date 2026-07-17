@@ -31,8 +31,9 @@ CI: `.github/workflows/bench.yml` runs nightly or by deliberate manual dispatch.
 Both the HTTP/API suite and the browser/WebRTC suite always measure the same
 `target`, sequentially, so a result describes one deployed experiment without
 competing WebRTC viewers. To compare Codex and Claude, dispatch one run for each
-deployment URL with a matching `deployment` label. Feature-branch pushes do not
-automatically spend runner time.
+deployment URL. The target's `/version` branch and SHA identify the experiment;
+the optional `deployment` input can override the branch label. Feature-branch
+pushes do not automatically spend runner time.
 
 ## Trend history
 
