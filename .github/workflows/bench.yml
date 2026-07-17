@@ -1,89 +1,169 @@
-# Max avatar performance bench — measures LLM reply latency, STT accuracy (WER)
-# and lip-sync stage timings against a deployed instance (default: the claude
-# bench instance, which runs with BENCH_ENDPOINTS=true).
-#
-# Deliberately measurement-only: deterministic script, no AI involvement, free
-# on public-repo runners. Cron requires this file on the default branch; until
-# then trigger it manually against the claude branch via workflow_dispatch.
-
+# One benchmark workflow, two complementary measurement methods. The HTTP suite
+# measures deterministic server/API stages; the WebRTC suite drives a real
+# headless Chrome viewer. A final single-writer job publishes both to bench-data.
 name: bench
 
 on:
   workflow_dispatch:
     inputs:
       target:
-        description: Base URL of the Max instance to bench
+        description: Base URL of the HTTP/API bench instance
         default: https://max-claude.sipsorcery.com
       iterations:
-        description: Number of /ask prompts
+        description: Number of HTTP /ask prompts
         default: "5"
+      webrtc_target:
+        description: Base URL of the browser/WebRTC bench instance
+        default: https://max-codex.sipsorcery.com
+      webrtc_iterations:
+        description: Number of deterministic WebRTC speech transitions
+        default: "3"
+      webrtc_llm_model:
+        description: LLM model name configured on the WebRTC target
+        default: mistral-3-14B
   schedule:
-    - cron: "17 3 * * *"   # nightly, off the hour to be a good citizen
-  # workflow_dispatch/schedule only register once this file reaches the default
-  # branch; push lets agent branches exercise the bench before that.
+    - cron: "17 3 * * *"
   push:
     branches:
       - "claude/**"
       - "codex/**"
 
-# contents: write lets the job append results to the bench-data branch.
 permissions:
   contents: write
 
-# Serialize runs: two bench passes against the same instance would fight over
-# /bench/reset, and concurrent pushes to bench-data would conflict.
+# A run resets /bench state and the publisher writes one shared data branch.
 concurrency:
   group: bench
   cancel-in-progress: false
 
 jobs:
-  bench:
+  http:
+    name: HTTP/API suite
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "8.0.x"
-
       - name: Cache STT corpus
         uses: actions/cache@v4
         with:
           path: bench/cache
           key: bench-corpus-${{ hashFiles('bench/corpus.json') }}
-
-      - name: Run bench
+      - name: Run HTTP/API benchmark
         run: |
           TARGET="${{ github.event.inputs.target || 'https://max-claude.sipsorcery.com' }}"
           ITERATIONS="${{ github.event.inputs.iterations || '5' }}"
           dotnet run --project src/MaxBench -c Release -- all \
             --target "$TARGET" --iterations "$ITERATIONS" --json bench-results.json \
-            --label "${GITHUB_SHA::8}" \
-            | tee bench-summary.md
+            --label "${GITHUB_SHA::8}" | tee bench-summary.md
           cat bench-summary.md >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload results
+      - name: Upload HTTP/API results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: bench-results-${{ github.run_number }}
+          name: http-bench-results-${{ github.run_id }}
           path: |
             bench-results.json
             bench-summary.md
           if-no-files-found: ignore
 
-      - name: Append to bench history (bench-data branch)
-        if: success()
+  webrtc:
+    name: Browser WebRTC suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: benchmarks/webrtc/package.json
+      - name: Install browser benchmark dependencies
+        working-directory: benchmarks/webrtc
+        # Chrome is supplied by the runner; avoid downloading Playwright's
+        # bundled Chromium, which cannot decode Max's H264 stream everywhere.
+        run: npm install --ignore-scripts
+      - name: Install audio preparation tool
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
+      - name: Prepare deterministic prompt audio
+        run: |
+          mkdir -p bench-webrtc
+          curl --fail --location --retry 3 \
+            https://www.voiptroubleshooter.com/open_speech/american/OSR_us_000_0010_8k.wav \
+            -o bench-webrtc/source.wav
+          # First Harvard sentence plus 800ms of silence. The runner reports its
+          # prompt-end boundary before the trailing silence.
+          ffmpeg -hide_banner -loglevel error -y -i bench-webrtc/source.wav -t 3.05 \
+            -af "apad=pad_dur=0.8" -t 3.85 -ar 48000 -ac 1 bench-webrtc/prompt.wav
+      - name: Run deterministic browser/WebRTC transitions
+        run: |
+          TARGET="${{ github.event.inputs.webrtc_target || 'https://max-codex.sipsorcery.com' }}"
+          ITERATIONS="${{ github.event.inputs.webrtc_iterations || '3' }}"
+          mkdir -p bench-webrtc/runs
+          curl --fail --silent --show-error "$TARGET/version" > bench-webrtc/version.json
+          INPUTS=()
+          for i in $(seq 1 "$ITERATIONS"); do
+            node benchmarks/webrtc/run.mjs --url "$TARGET" --audio bench-webrtc/prompt.wav \
+              --out "bench-webrtc/runs/$i.json" --recording "bench-webrtc/diagnostic-$i.webm"
+            INPUTS+=(--input "bench-webrtc/runs/$i.json")
+          done
+          DEPLOYED_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("bench-webrtc/version.json")).sha || process.env.GITHUB_SHA)' )"
+          node benchmarks/webrtc/report.mjs \
+            "${INPUTS[@]}" \
+            --run-out bench-webrtc/webrtc-result.json --history-dir bench-webrtc/generated-history \
+            --run-id "webrtc-${GITHUB_RUN_ID}" --commit-sha "$DEPLOYED_SHA" \
+            --target "$TARGET" --deployment codex --runner github-actions-ubuntu \
+            --llm-model "${{ github.event.inputs.webrtc_llm_model || 'mistral-3-14B' }}"
+      - name: Upload browser/WebRTC results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: webrtc-bench-results-${{ github.run_id }}
+          path: bench-webrtc/
+          if-no-files-found: ignore
+
+  publish:
+    name: Publish unified bench history
+    needs: [http, webrtc]
+    if: ${{ needs.http.result == 'success' && needs.webrtc.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - uses: actions/download-artifact@v4
+        with:
+          name: http-bench-results-${{ github.run_id }}
+          path: artifacts/http
+      - uses: actions/download-artifact@v4
+        with:
+          name: webrtc-bench-results-${{ github.run_id }}
+          path: artifacts/webrtc
+      - name: Append both suites to bench-data
         run: |
           git config user.name "bench-bot"
           git config user.email "actions@users.noreply.github.com"
           git fetch origin bench-data
           git worktree add ../bench-data origin/bench-data
           STAMP=$(date -u +%Y%m%dT%H%M%SZ)
-          cp bench-results.json "../bench-data/runs/${STAMP}-${GITHUB_SHA::8}.json"
+          WEBRTC_SHA="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("artifacts/webrtc/webrtc-result.json")).source.commitSha.slice(0, 8))')"
+          cp artifacts/http/bench-results.json "../bench-data/runs/${STAMP}-http-${GITHUB_SHA::8}.json"
+          cp artifacts/webrtc/webrtc-result.json "../bench-data/runs/${STAMP}-webrtc-${WEBRTC_SHA}.json"
+          for seed in benchmarks/webrtc/history-seed/*.json; do
+            destination="../bench-data/runs/webrtc-$(basename "$seed")"
+            test -f "$destination" || cp "$seed" "$destination"
+          done
+          test -f ../bench-data/README.md || cp benchmarks/webrtc/bench-data-README.md ../bench-data/README.md
           dotnet run --project src/MaxBench -c Release -- history --history-dir ../bench-data
           cd ../bench-data
           git add -A
-          git commit -m "bench: ${STAMP} ${GITHUB_SHA::8} (${{ github.event_name }})"
-          git push origin HEAD:bench-data
+          if ! git diff --cached --quiet; then
+            git commit -m "bench: ${STAMP} (${GITHUB_SHA::8})"
+            git push origin HEAD:bench-data
+          fi
