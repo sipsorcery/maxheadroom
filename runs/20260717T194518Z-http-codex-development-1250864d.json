@@ -1,0 +1,23 @@
+{
+  "target": "https://max-codex.sipsorcery.com",
+  "utc": "2026-07-17T19:42:55.1120254Z",
+  "mode": "all",
+  "label": "codex/development-1250864d",
+  "llm_model": "mistral-3-14B",
+  "tts_engine": "elevenlabs-streaming",
+  "tts_voice": "21m00Tcm4TlvDq8ikWAM",
+  "stt_engine": "elevenlabs-streaming",
+  "stt_model": "scribe_v2_realtime",
+  "ask": {
+    "iterations": 5,
+    "failures": 4,
+    "client_ms": [
+      10464.8
+    ],
+    "first_audio_ms": [
+      204
+    ],
+    "server_aggregates": null
+  },
+  "server_metrics": null
+}
