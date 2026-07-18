@@ -343,7 +343,7 @@ class Program
         var realtime = _openAiRealtimeSession;
         if (realtime != null)
         {
-            var realtimeReply = await realtime.AskTextAsync(prompt, timeline).ConfigureAwait(false);
+            var realtimeReply = await realtime.AskTextAsync(prompt).ConfigureAwait(false);
             _logger.LogInformation("OpenAI Realtime reply: {Reply}", realtimeReply);
             return realtimeReply;
         }
@@ -553,22 +553,14 @@ class Program
                 _openAiRealtimeTranscriptionModel,
                 _openAiRealtimeSilenceMs,
                 videoSource,
-                audioSource,
-                () => benchmarkSession?.Timeline);
+                audioSource);
             realtimeSession.InputTranscript += text => PublishUiEvent("stt", text);
             realtimeSession.OutputTranscript += text => PublishUiEvent("llm", text);
 
-            var micDecoder = new AudioEncoder();
-            var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);
             pc.OnAudioFrameReceived += frame =>
             {
                 try
                 {
-                    if (benchmarkSession != null)
-                    {
-                        benchmarkSession.RecordReceivedAudio(
-                            micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat));
-                    }
                     realtimeSession.WritePcmu(frame.EncodedAudio);
                 }
                 catch (Exception excp)
@@ -624,7 +616,10 @@ class Program
                         if (realtimeSession != null)
                         {
                             await realtimeSession.StartAsync();
-                            if (benchmarkSession == null)
+                            var benchmarkMode =
+                                string.Equals(Environment.GetEnvironmentVariable("BENCH_ENDPOINTS"), "true", StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(Environment.GetEnvironmentVariable("BENCHMARK_ENDPOINT_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
+                            if (!benchmarkMode)
                             {
                                 _ = realtimeSession.AskTextAsync("Briefly greet the viewer.");
                             }

@@ -20,7 +20,6 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using Concentus;
-using demo.Performance;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Media;
 using SIPSorceryMedia.Abstractions;
@@ -38,7 +37,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
     private readonly int _silenceDurationMs;
     private readonly IAvatarMouth _renderer;
     private readonly AudioExtrasSource _audio;
-    private readonly Func<BenchmarkTimeline?> _timelineProvider;
     private readonly ClientWebSocket _socket = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
@@ -58,7 +56,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
     private Task? _senderTask;
     private Task? _receiverTask;
     private Task? _playerTask;
-    private BenchmarkTimeline? _nextResponseTimeline;
     private TaskCompletionSource<string>? _nextResponseCompletion;
     private TaskCompletionSource<string>? _pendingAsk;
     private string? _currentResponseId;
@@ -71,8 +68,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         string transcriptionModel,
         int silenceDurationMs,
         IAvatarMouth renderer,
-        AudioExtrasSource audio,
-        Func<BenchmarkTimeline?> timelineProvider)
+        AudioExtrasSource audio)
     {
         _apiKey = apiKey;
         _model = model;
@@ -81,7 +77,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         _silenceDurationMs = silenceDurationMs;
         _renderer = renderer;
         _audio = audio;
-        _timelineProvider = timelineProvider;
     }
 
     public event Action<string>? InputTranscript;
@@ -154,7 +149,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
 
     public async Task<string> AskTextAsync(
         string prompt,
-        BenchmarkTimeline? timeline = null,
         CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrWhiteSpace(prompt))
@@ -166,11 +160,9 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         try
         {
             await StartAsync(cancellationToken).ConfigureAwait(false);
-            timeline?.RecordOnce(BenchmarkEventNames.PromptAccepted);
 
             var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingAsk = completion;
-            _nextResponseTimeline = timeline;
             _nextResponseCompletion = completion;
 
             await SendAsync(new
@@ -190,7 +182,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         finally
         {
             _pendingAsk = null;
-            _nextResponseTimeline = null;
             _nextResponseCompletion = null;
             _askLock.Release();
         }
@@ -249,11 +240,8 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
             case "response.created":
             {
                 var id = GetNestedString(root, "response", "id") ?? Guid.NewGuid().ToString("N");
-                var timeline = Interlocked.Exchange(ref _nextResponseTimeline, null) ?? _timelineProvider();
                 var completion = Interlocked.Exchange(ref _nextResponseCompletion, null);
-                timeline?.RecordOnce(BenchmarkEventNames.LlmRequestStarted);
-                timeline?.RecordOnce(BenchmarkEventNames.LlmResponseHeaders);
-                _responses[id] = new ResponseState(timeline, completion);
+                _responses[id] = new ResponseState(completion);
                 _currentResponseId = id;
                 break;
             }
@@ -263,7 +251,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 var transcript = GetString(root, "transcript");
                 if (!string.IsNullOrWhiteSpace(transcript))
                 {
-                    _timelineProvider()?.RecordOnce(BenchmarkEventNames.SttFinal);
                     InputTranscript?.Invoke(transcript.Trim());
                 }
                 break;
@@ -276,13 +263,11 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 var delta = GetString(root, "delta");
                 if (state != null && !string.IsNullOrEmpty(delta))
                 {
-                    state.Timeline?.RecordOnce(BenchmarkEventNames.LlmFirstToken);
                     state.Transcript.Append(delta);
                     if (!state.FirstSentence &&
                         delta.IndexOfAny(['.', '!', '?', '\n']) >= 0)
                     {
                         state.FirstSentence = true;
-                        state.Timeline?.RecordOnce(BenchmarkEventNames.LlmFirstSentence);
                     }
                 }
                 break;
@@ -309,7 +294,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 var delta = GetString(root, "delta");
                 if (state != null && !string.IsNullOrEmpty(delta))
                 {
-                    state.Timeline?.RecordOnce(BenchmarkEventNames.TtsAudioReady);
                     var pcm16 = ResampleOutputAudio(Convert.FromBase64String(delta), state);
                     if (pcm16.Length > 0)
                     {
@@ -343,7 +327,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
             {
                 var id = GetNestedString(root, "response", "id") ?? GetResponseId(root);
                 var state = GetResponse(id);
-                state?.Timeline?.RecordOnce(BenchmarkEventNames.LlmComplete);
                 if (state != null)
                 {
                     state.ResponseDone = true;
@@ -384,7 +367,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                     speakingResponse = null;
                 }
                 state.AudioDone = true;
-                state.Timeline?.RecordOnce(BenchmarkEventNames.AudioComplete);
                 CompleteIfFinished(item.ResponseId, state);
                 continue;
             }
@@ -413,7 +395,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 _renderer.PushAudio(item.Pcm16, 16000);
             }
 
-            state.Timeline?.RecordOnce(BenchmarkEventNames.AudioStarted);
             await _audio.SendAudioFromStream(ToStream(item.Pcm16), AudioSamplingRatesEnum.Rate16KHz)
                 .ConfigureAwait(false);
         }
@@ -552,11 +533,8 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         _askLock.Dispose();
     }
 
-    private sealed class ResponseState(
-        BenchmarkTimeline? timeline,
-        TaskCompletionSource<string>? completion)
+    private sealed class ResponseState(TaskCompletionSource<string>? completion)
     {
-        public BenchmarkTimeline? Timeline { get; } = timeline;
         public TaskCompletionSource<string>? Completion { get; } = completion;
         public IResampler Resampler { get; } =
             ResamplerFactory.CreateResampler(1, 24000, 16000, 5, TextWriter.Null);
