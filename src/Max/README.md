@@ -227,6 +227,43 @@ The optional build arguments are exposed by `GET /version` together with the act
 LLM, TTS, STT, endpointing, audio and renderer configuration. The web page displays
 the same build identity and pipeline in a small badge under the title.
 
+### Automated Docker Hub builds
+
+Pushing a Git tag named `docker/<channel>/<version>` automatically builds the commit
+the tag points to and publishes it to Docker Hub. For example, to build the current
+commit:
+
+```powershell
+git tag -a docker/test/2026.07.18-1 -m "Test image"
+git push origin docker/test/2026.07.18-1
+```
+
+It is not necessary to check out the source branch. This tags the current remote tip
+of `feature/test` instead:
+
+```powershell
+git fetch origin
+git tag -a docker/test/2026.07.18-1 origin/feature/test -m "Test image"
+git push origin docker/test/2026.07.18-1
+```
+
+The example publishes these immutable image references:
+
+```text
+sipsorcery/webrtc-max-headroom:test-2026.07.18-1
+sipsorcery/webrtc-max-headroom:sha-0123abcd
+```
+
+The `channel` is an image/build label; it does not select the source branch. The Git
+commit to which the tag points is always the source of the build. A `master` or
+`release` channel also updates `sipsorcery/webrtc-max-headroom:latest`. Build tags
+should not be moved or reused.
+
+The tag-trigger workflow must be present in the tagged commit. Branches created before
+this capability was added must merge or rebase the workflow change before their tags
+can start automatic builds. The workflow's existing manual-dispatch mode remains
+available when a custom image reference or build description is needed.
+
 The supplied Compose file maps the conventional `C:\tools` model tree into the
 container and configures all of the Linux model paths. From this directory:
 
