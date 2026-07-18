@@ -59,6 +59,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
     private Task? _receiverTask;
     private Task? _playerTask;
     private BenchmarkTimeline? _nextResponseTimeline;
+    private TaskCompletionSource<string>? _nextResponseCompletion;
     private TaskCompletionSource<string>? _pendingAsk;
     private string? _currentResponseId;
     private bool _disposed;
@@ -170,6 +171,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
             var completion = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
             _pendingAsk = completion;
             _nextResponseTimeline = timeline;
+            _nextResponseCompletion = completion;
 
             await SendAsync(new
             {
@@ -189,6 +191,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         {
             _pendingAsk = null;
             _nextResponseTimeline = null;
+            _nextResponseCompletion = null;
             _askLock.Release();
         }
     }
@@ -247,9 +250,10 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
             {
                 var id = GetNestedString(root, "response", "id") ?? Guid.NewGuid().ToString("N");
                 var timeline = Interlocked.Exchange(ref _nextResponseTimeline, null) ?? _timelineProvider();
+                var completion = Interlocked.Exchange(ref _nextResponseCompletion, null);
                 timeline?.RecordOnce(BenchmarkEventNames.LlmRequestStarted);
                 timeline?.RecordOnce(BenchmarkEventNames.LlmResponseHeaders);
-                _responses[id] = new ResponseState(timeline);
+                _responses[id] = new ResponseState(timeline, completion);
                 _currentResponseId = id;
                 break;
             }
@@ -410,7 +414,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         {
             OutputTranscript?.Invoke(transcript);
         }
-        _pendingAsk?.TrySetResult(transcript);
+        state.Completion?.TrySetResult(transcript);
         _responses.TryRemove(responseId, out _);
     }
 
@@ -506,9 +510,12 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
         _askLock.Dispose();
     }
 
-    private sealed class ResponseState(BenchmarkTimeline? timeline)
+    private sealed class ResponseState(
+        BenchmarkTimeline? timeline,
+        TaskCompletionSource<string>? completion)
     {
         public BenchmarkTimeline? Timeline { get; } = timeline;
+        public TaskCompletionSource<string>? Completion { get; } = completion;
         public StringBuilder Transcript { get; } = new();
         public bool FirstSentence { get; set; }
         public bool ResponseDone { get; set; }
