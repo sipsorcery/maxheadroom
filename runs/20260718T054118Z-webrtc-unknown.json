@@ -1,0 +1,513 @@
+{
+  "schemaVersion": 1,
+  "runId": "webrtc-29632583018",
+  "startedAtUtc": "2026-07-18T05:40:29.678Z",
+  "source": {
+    "commitSha": "unknown"
+  },
+  "environment": {
+    "machineName": "github-actions-ubuntu",
+    "operatingSystem": "Linux 6.17.0-1020-azure",
+    "processArchitecture": "x64",
+    "framework": "Node v22.23.1; Playwright chrome",
+    "processorCount": 4
+  },
+  "configuration": {
+    "suite": "webrtc-lipsync-v1",
+    "target": "https://max-claude.sipsorcery.com",
+    "browserChannel": "chrome",
+    "inputAudio": "prompt.wav",
+    "trailingSilenceMilliseconds": "600",
+    "audioOnsetThresholdRms": "0.018",
+    "mouthOnsetThresholdRelativeInterFrameRgbDelta": "3",
+    "deployment": "unknown",
+    "runner": "github-actions-ubuntu",
+    "llmModel": "llama-4-maverick",
+    "ttsEngine": "elevenlabs",
+    "ttsVoice": "N2lVS1w4EtoT3dr4eOWO",
+    "sttEngine": "elevenlabs",
+    "sttModel": "scribe_v1",
+    "avatarRenderer": "wav2lip",
+    "samples": "3",
+    "deploymentRestarts": "not observed",
+    "browserMouthDetectionQuality": "consistent"
+  },
+  "cases": [
+    {
+      "name": "deterministic_speech_transition",
+      "correlationId": "db0774adfb274595a9c09efe9510c43d",
+      "iteration": 0,
+      "warm": true,
+      "succeeded": true,
+      "metricsMilliseconds": {
+        "server_speech_end_to_stt_final_ms": 988.8887,
+        "server_speech_end_to_llm_first_token_ms": 2442.5121999999997,
+        "server_speech_end_to_audio_started_ms": 3113.6510999999996,
+        "server_speech_end_to_first_mouth_frame_ms": 3438.6365,
+        "client_speech_end_to_audio_ms": 3649.7000000000044,
+        "client_speech_end_to_first_mouth_ms": 3590.2000000000044,
+        "wav2lip_mean_inference_ms": 109.11689630645161,
+        "wav2lip_max_inference_ms": 156.651983,
+        "video_mean_encode_ms": 5.713623171806167,
+        "video_max_encode_ms": 16.671009,
+        "mouth_frame_mean_lateness_ms": 143.2755688387097,
+        "mouth_frame_max_lateness_ms": 253.642199
+      },
+      "metrics": {
+        "received_mouth_minus_audio_ms": -59.5,
+        "effective_fps": 12.979587169077705,
+        "dropped_ticks": 211,
+        "browser_outbound_audio_packets_sent": 192,
+        "browser_outbound_audio_bytes_sent": 30720,
+        "browser_inbound_audio_packets_received": 944,
+        "browser_inbound_audio_bytes_received": 151040,
+        "browser_inbound_video_frames_decoded": 258,
+        "browser_candidate_pair_packets_sent": 278,
+        "browser_candidate_pair_packets_received": 2825,
+        "server_received_audio_frames": 192,
+        "server_received_audio_samples": 30720,
+        "server_received_audio_rms": 1805.8924417668038,
+        "server_received_audio_peak": 9340
+      },
+      "events": [
+        {
+          "name": "speech_end",
+          "elapsedMilliseconds": 3364.4022
+        },
+        {
+          "name": "stt_final",
+          "elapsedMilliseconds": 4353.2909
+        },
+        {
+          "name": "llm_first_token",
+          "elapsedMilliseconds": 5806.9144
+        },
+        {
+          "name": "audio_started",
+          "elapsedMilliseconds": 6478.0533
+        },
+        {
+          "name": "first_mouth_frame",
+          "elapsedMilliseconds": 6803.0387
+        },
+        {
+          "name": "audio_complete",
+          "elapsedMilliseconds": 17470.2899
+        }
+      ],
+      "serverReceivedAudio": {
+        "frames": 192,
+        "samples": 30720,
+        "rms": 1805.8924417668038,
+        "peak": 9340
+      },
+      "mediaStats": {
+        "outboundAudioPacketsSent": 192,
+        "outboundAudioBytesSent": 30720,
+        "outboundAudioCodec": "audio/PCMU",
+        "outboundAudioPayloadType": 0,
+        "inboundAudioPacketsReceived": 944,
+        "inboundAudioBytesReceived": 151040,
+        "inboundVideoFramesDecoded": 258,
+        "candidatePairPacketsSent": 278,
+        "candidatePairPacketsReceived": 2825
+      }
+    },
+    {
+      "name": "deterministic_speech_transition",
+      "correlationId": "5183dc992f0f47e09613ca9d6f448006",
+      "iteration": 1,
+      "warm": true,
+      "succeeded": true,
+      "metricsMilliseconds": {
+        "server_speech_end_to_stt_final_ms": 922.3471,
+        "server_speech_end_to_llm_first_token_ms": 1243.8275000000003,
+        "server_speech_end_to_audio_started_ms": 1543.1369000000004,
+        "server_speech_end_to_first_mouth_frame_ms": 1834.1053000000002,
+        "client_speech_end_to_audio_ms": 1769.800000000003,
+        "client_speech_end_to_first_mouth_ms": 1982.699999999997,
+        "wav2lip_mean_inference_ms": 109.78773003448276,
+        "wav2lip_max_inference_ms": 132.582346,
+        "video_mean_encode_ms": 5.1981906172839505,
+        "video_max_encode_ms": 13.391582,
+        "mouth_frame_mean_lateness_ms": 136.40582703448274,
+        "mouth_frame_max_lateness_ms": 163.896999
+      },
+      "metrics": {
+        "received_mouth_minus_audio_ms": 212.89999999999418,
+        "effective_fps": 15.682478218780252,
+        "dropped_ticks": 96,
+        "browser_outbound_audio_packets_sent": 192,
+        "browser_outbound_audio_bytes_sent": 30720,
+        "browser_inbound_audio_packets_received": 583,
+        "browser_inbound_audio_bytes_received": 93280,
+        "browser_inbound_video_frames_decoded": 192,
+        "browser_candidate_pair_packets_sent": 234,
+        "browser_candidate_pair_packets_received": 1961,
+        "server_received_audio_frames": 192,
+        "server_received_audio_samples": 30720,
+        "server_received_audio_rms": 1805.8924417668038,
+        "server_received_audio_peak": 9340
+      },
+      "events": [
+        {
+          "name": "speech_end",
+          "elapsedMilliseconds": 3350.7976
+        },
+        {
+          "name": "stt_final",
+          "elapsedMilliseconds": 4273.1447
+        },
+        {
+          "name": "llm_first_token",
+          "elapsedMilliseconds": 4594.6251
+        },
+        {
+          "name": "audio_started",
+          "elapsedMilliseconds": 4893.9345
+        },
+        {
+          "name": "first_mouth_frame",
+          "elapsedMilliseconds": 5184.9029
+        },
+        {
+          "name": "audio_complete",
+          "elapsedMilliseconds": 10273.4217
+        }
+      ],
+      "serverReceivedAudio": {
+        "frames": 192,
+        "samples": 30720,
+        "rms": 1805.8924417668038,
+        "peak": 9340
+      },
+      "mediaStats": {
+        "outboundAudioPacketsSent": 192,
+        "outboundAudioBytesSent": 30720,
+        "outboundAudioCodec": "audio/PCMU",
+        "outboundAudioPayloadType": 0,
+        "inboundAudioPacketsReceived": 583,
+        "inboundAudioBytesReceived": 93280,
+        "inboundVideoFramesDecoded": 192,
+        "candidatePairPacketsSent": 234,
+        "candidatePairPacketsReceived": 1961
+      }
+    },
+    {
+      "name": "deterministic_speech_transition",
+      "correlationId": "c781aaba458c4ad5a7557a4b7e47f5bb",
+      "iteration": 2,
+      "warm": true,
+      "succeeded": true,
+      "metricsMilliseconds": {
+        "server_speech_end_to_stt_final_ms": 929.6812999999997,
+        "server_speech_end_to_llm_first_token_ms": 1564.2828999999997,
+        "server_speech_end_to_audio_started_ms": 1858.5561000000002,
+        "server_speech_end_to_first_mouth_frame_ms": 2123.8368000000005,
+        "client_speech_end_to_audio_ms": 2549.699999999997,
+        "client_speech_end_to_first_mouth_ms": 2587.5,
+        "wav2lip_mean_inference_ms": 110.8903929074074,
+        "wav2lip_max_inference_ms": 259.190786,
+        "video_mean_encode_ms": 5.2936813631840804,
+        "video_max_encode_ms": 13.509758,
+        "mouth_frame_mean_lateness_ms": 139.29044777777779,
+        "mouth_frame_max_lateness_ms": 309.8207
+      },
+      "metrics": {
+        "received_mouth_minus_audio_ms": 37.80000000000291,
+        "effective_fps": 13.388396722840206,
+        "dropped_ticks": 174,
+        "browser_outbound_audio_packets_sent": 192,
+        "browser_outbound_audio_bytes_sent": 30720,
+        "browser_inbound_audio_packets_received": 817,
+        "browser_inbound_audio_bytes_received": 130720,
+        "browser_inbound_video_frames_decoded": 234,
+        "browser_candidate_pair_packets_sent": 259,
+        "browser_candidate_pair_packets_received": 2507,
+        "server_received_audio_frames": 192,
+        "server_received_audio_samples": 30720,
+        "server_received_audio_rms": 1805.8924417668038,
+        "server_received_audio_peak": 9340
+      },
+      "events": [
+        {
+          "name": "speech_end",
+          "elapsedMilliseconds": 3353.993
+        },
+        {
+          "name": "stt_final",
+          "elapsedMilliseconds": 4283.6743
+        },
+        {
+          "name": "llm_first_token",
+          "elapsedMilliseconds": 4918.2759
+        },
+        {
+          "name": "audio_started",
+          "elapsedMilliseconds": 5212.5491
+        },
+        {
+          "name": "first_mouth_frame",
+          "elapsedMilliseconds": 5477.8298
+        },
+        {
+          "name": "audio_complete",
+          "elapsedMilliseconds": 14880.6732
+        }
+      ],
+      "serverReceivedAudio": {
+        "frames": 192,
+        "samples": 30720,
+        "rms": 1805.8924417668038,
+        "peak": 9340
+      },
+      "mediaStats": {
+        "outboundAudioPacketsSent": 192,
+        "outboundAudioBytesSent": 30720,
+        "outboundAudioCodec": "audio/PCMU",
+        "outboundAudioPayloadType": 0,
+        "inboundAudioPacketsReceived": 817,
+        "inboundAudioBytesReceived": 130720,
+        "inboundVideoFramesDecoded": 234,
+        "candidatePairPacketsSent": 259,
+        "candidatePairPacketsReceived": 2507
+      }
+    }
+  ],
+  "summaries": {
+    "client_speech_end_to_audio_ms": {
+      "count": 3,
+      "minimum": 1769.800000000003,
+      "maximum": 3649.7000000000044,
+      "mean": 2656.4000000000015,
+      "p50": 2549.699999999997,
+      "p90": 3429.700000000003,
+      "p95": 3539.7000000000035
+    },
+    "client_speech_end_to_first_mouth_ms": {
+      "count": 3,
+      "minimum": 1982.699999999997,
+      "maximum": 3590.2000000000044,
+      "mean": 2720.1333333333337,
+      "p50": 2587.5,
+      "p90": 3389.6600000000035,
+      "p95": 3489.930000000004
+    },
+    "mouth_frame_max_lateness_ms": {
+      "count": 3,
+      "minimum": 163.896999,
+      "maximum": 309.8207,
+      "mean": 242.45329933333332,
+      "p50": 253.642199,
+      "p90": 298.5849998,
+      "p95": 304.2028499
+    },
+    "mouth_frame_mean_lateness_ms": {
+      "count": 3,
+      "minimum": 136.40582703448274,
+      "maximum": 143.2755688387097,
+      "mean": 139.65728121699007,
+      "p50": 139.29044777777779,
+      "p90": 142.4785446265233,
+      "p95": 142.8770567326165
+    },
+    "server_speech_end_to_audio_started_ms": {
+      "count": 3,
+      "minimum": 1543.1369000000004,
+      "maximum": 3113.6510999999996,
+      "mean": 2171.7813666666666,
+      "p50": 1858.5561000000002,
+      "p90": 2862.6321,
+      "p95": 2988.1415999999995
+    },
+    "server_speech_end_to_first_mouth_frame_ms": {
+      "count": 3,
+      "minimum": 1834.1053000000002,
+      "maximum": 3438.6365,
+      "mean": 2465.5262000000002,
+      "p50": 2123.8368000000005,
+      "p90": 3175.67656,
+      "p95": 3307.15653
+    },
+    "server_speech_end_to_llm_first_token_ms": {
+      "count": 3,
+      "minimum": 1243.8275000000003,
+      "maximum": 2442.5121999999997,
+      "mean": 1750.2075333333332,
+      "p50": 1564.2828999999997,
+      "p90": 2266.8663399999996,
+      "p95": 2354.68927
+    },
+    "server_speech_end_to_stt_final_ms": {
+      "count": 3,
+      "minimum": 922.3471,
+      "maximum": 988.8887,
+      "mean": 946.9723666666665,
+      "p50": 929.6812999999997,
+      "p90": 977.0472199999999,
+      "p95": 982.96796
+    },
+    "video_max_encode_ms": {
+      "count": 3,
+      "minimum": 13.391582,
+      "maximum": 16.671009,
+      "mean": 14.524116333333334,
+      "p50": 13.509758,
+      "p90": 16.0387588,
+      "p95": 16.3548839
+    },
+    "video_mean_encode_ms": {
+      "count": 3,
+      "minimum": 5.1981906172839505,
+      "maximum": 5.713623171806167,
+      "mean": 5.401831717424732,
+      "p50": 5.2936813631840804,
+      "p90": 5.6296348100817495,
+      "p95": 5.671628990943958
+    },
+    "wav2lip_max_inference_ms": {
+      "count": 3,
+      "minimum": 132.582346,
+      "maximum": 259.190786,
+      "mean": 182.80837166666666,
+      "p50": 156.651983,
+      "p90": 238.68302540000002,
+      "p95": 248.9369057
+    },
+    "wav2lip_mean_inference_ms": {
+      "count": 3,
+      "minimum": 109.11689630645161,
+      "maximum": 110.8903929074074,
+      "mean": 109.93167308278059,
+      "p50": 109.78773003448276,
+      "p90": 110.66986033282248,
+      "p95": 110.78012662011494
+    },
+    "browser_candidate_pair_packets_received": {
+      "count": 3,
+      "minimum": 1961,
+      "maximum": 2825,
+      "mean": 2431,
+      "p50": 2507,
+      "p90": 2761.4,
+      "p95": 2793.2
+    },
+    "browser_candidate_pair_packets_sent": {
+      "count": 3,
+      "minimum": 234,
+      "maximum": 278,
+      "mean": 257,
+      "p50": 259,
+      "p90": 274.2,
+      "p95": 276.1
+    },
+    "browser_inbound_audio_bytes_received": {
+      "count": 3,
+      "minimum": 93280,
+      "maximum": 151040,
+      "mean": 125013.33333333333,
+      "p50": 130720,
+      "p90": 146976,
+      "p95": 149008
+    },
+    "browser_inbound_audio_packets_received": {
+      "count": 3,
+      "minimum": 583,
+      "maximum": 944,
+      "mean": 781.3333333333334,
+      "p50": 817,
+      "p90": 918.6,
+      "p95": 931.3
+    },
+    "browser_inbound_video_frames_decoded": {
+      "count": 3,
+      "minimum": 192,
+      "maximum": 258,
+      "mean": 228,
+      "p50": 234,
+      "p90": 253.2,
+      "p95": 255.6
+    },
+    "browser_outbound_audio_bytes_sent": {
+      "count": 3,
+      "minimum": 30720,
+      "maximum": 30720,
+      "mean": 30720,
+      "p50": 30720,
+      "p90": 30720,
+      "p95": 30720
+    },
+    "browser_outbound_audio_packets_sent": {
+      "count": 3,
+      "minimum": 192,
+      "maximum": 192,
+      "mean": 192,
+      "p50": 192,
+      "p90": 192,
+      "p95": 192
+    },
+    "dropped_ticks": {
+      "count": 3,
+      "minimum": 96,
+      "maximum": 211,
+      "mean": 160.33333333333334,
+      "p50": 174,
+      "p90": 203.6,
+      "p95": 207.3
+    },
+    "effective_fps": {
+      "count": 3,
+      "minimum": 12.979587169077705,
+      "maximum": 15.682478218780252,
+      "mean": 14.016820703566054,
+      "p50": 13.388396722840206,
+      "p90": 15.223661919592242,
+      "p95": 15.453070069186246
+    },
+    "received_mouth_minus_audio_ms": {
+      "count": 3,
+      "minimum": -59.5,
+      "maximum": 212.89999999999418,
+      "mean": 63.73333333333236,
+      "p50": 37.80000000000291,
+      "p90": 177.87999999999593,
+      "p95": 195.38999999999504
+    },
+    "server_received_audio_frames": {
+      "count": 3,
+      "minimum": 192,
+      "maximum": 192,
+      "mean": 192,
+      "p50": 192,
+      "p90": 192,
+      "p95": 192
+    },
+    "server_received_audio_peak": {
+      "count": 3,
+      "minimum": 9340,
+      "maximum": 9340,
+      "mean": 9340,
+      "p50": 9340,
+      "p90": 9340,
+      "p95": 9340
+    },
+    "server_received_audio_rms": {
+      "count": 3,
+      "minimum": 1805.8924417668038,
+      "maximum": 1805.8924417668038,
+      "mean": 1805.8924417668038,
+      "p50": 1805.8924417668038,
+      "p90": 1805.8924417668038,
+      "p95": 1805.8924417668038
+    },
+    "server_received_audio_samples": {
+      "count": 3,
+      "minimum": 30720,
+      "maximum": 30720,
+      "mean": 30720,
+      "p50": 30720,
+      "p90": 30720,
+      "p95": 30720
+    }
+  }
+}
