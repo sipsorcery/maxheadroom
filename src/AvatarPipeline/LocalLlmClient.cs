@@ -1,4 +1,4 @@
-﻿//-----------------------------------------------------------------------------
+//-----------------------------------------------------------------------------
 // Filename: LocalLlmClient.cs
 //
 // Description: Minimal client for an OpenAI-compatible chat completions endpoint.
@@ -40,6 +40,12 @@ public class LocalLlmClient : ILlmClient
     private readonly string _systemPrompt;
 
     private static readonly ILogger logger = SIPSorcery.LogFactory.CreateLogger<LocalLlmClient>();
+
+    // Optional hard cap on reply length (LLM_MAX_TOKENS). The persona already asks for
+    // one or two short sentences; the cap enforces it, cutting time-to-full-audio when
+    // a model rambles. Omitted from the request when unset.
+    private static readonly int? MaxReplyTokens =
+        int.TryParse(Environment.GetEnvironmentVariable("LLM_MAX_TOKENS"), out var n) && n > 0 ? n : null;
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(60) };
     private readonly string _endpoint;
@@ -87,6 +93,7 @@ public class LocalLlmClient : ILlmClient
             {
                 Model = _model,
                 Stream = false,
+                MaxTokens = MaxReplyTokens,
                 Messages = new[]
                 {
                     new ChatMessage { Role = "system", Content = _systemPrompt },
@@ -178,6 +185,7 @@ public class LocalLlmClient : ILlmClient
             {
                 Model = _model,
                 Stream = true,
+                MaxTokens = MaxReplyTokens,
                 Messages = new[]
                 {
                     new ChatMessage { Role = "system", Content = _systemPrompt },
@@ -304,6 +312,7 @@ public class LocalLlmClient : ILlmClient
         [JsonPropertyName("model")] public string Model { get; set; }
         [JsonPropertyName("messages")] public ChatMessage[] Messages { get; set; }
         [JsonPropertyName("stream")] public bool Stream { get; set; }
+        [JsonPropertyName("max_tokens"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] public int? MaxTokens { get; set; }
     }
 
     private class ChatMessage

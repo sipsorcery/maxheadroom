@@ -72,7 +72,8 @@ public sealed class SherpaSpeechRecognizer : SpeechRecognizer
                Directory.EnumerateFiles(dir, "*encoder*.onnx").Any();
     }
 
-    public SherpaSpeechRecognizer(string modelDir = null)
+    public SherpaSpeechRecognizer(string modelDir = null, int sampleRate = 8000)
+        : base(sampleRate)
     {
         _modelDir = string.IsNullOrWhiteSpace(modelDir) ? DefaultModelDir : modelDir;
     }
@@ -151,11 +152,13 @@ public sealed class SherpaSpeechRecognizer : SpeechRecognizer
         }
     });
 
-    protected override Task<string> TranscribeAsync(short[] pcm8k)
+    protected override Task<string> TranscribeAsync(short[] pcm)
     {
         return Task.Run(() =>
         {
-            var samples = To16kFloat(pcm8k);
+            // The engine is fixed at 16kHz; the 8kHz legacy paths (/--stt-test, /bench/stt)
+            // upsample, the 16kHz WebRTC mic path feeds it directly.
+            var samples = SampleRate == 16000 ? ToFloat(pcm) : To16kFloat(pcm);
             // The engine is shared app-wide; serialise decodes on the native instance.
             lock (_recognizer)
             {
@@ -165,6 +168,18 @@ public sealed class SherpaSpeechRecognizer : SpeechRecognizer
                 return stream.Result.Text;
             }
         });
+    }
+
+    /// <summary>Converts 16kHz 16-bit PCM straight to normalised float mono.</summary>
+    private static float[] ToFloat(short[] pcm)
+    {
+        var outBuf = new float[pcm.Length];
+        const float scale = 1f / 32768f;
+        for (int i = 0; i < pcm.Length; i++)
+        {
+            outBuf[i] = pcm[i] * scale;
+        }
+        return outBuf;
     }
 
     /// <summary>Upsamples 8kHz 16-bit PCM to 16kHz normalised float mono (linear interpolation, factor 2).</summary>

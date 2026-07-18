@@ -76,7 +76,13 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         _sessions.GetOrAdd(Path.GetFullPath(modelPath), path =>
         {
             // DirectML (any DX12 GPU) on Windows; the Linux container uses CPU onnxruntime.
+            // WAV2LIP_THREADS pins ORT's intra-op pool: on a cgroup-limited pod the default
+            // all-cores pool oversubscribes the quota and thrashes, so align it with the limit.
             var so = new SessionOptions { EnableMemoryPattern = false, ExecutionMode = ExecutionMode.ORT_SEQUENTIAL };
+            if (int.TryParse(Environment.GetEnvironmentVariable("WAV2LIP_THREADS"), out var ortThreads) && ortThreads > 0)
+            {
+                so.IntraOpNumThreads = ortThreads;
+            }
             if (OperatingSystem.IsWindows())
             {
                 try
