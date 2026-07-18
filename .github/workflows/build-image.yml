@@ -1,19 +1,27 @@
-# Manually-triggered Docker image build, callable by any collaborator/agent working
-# on this repo (each agent builds/deploys from its own branch and namespace - see
-# AGENTS.md - so this lives on master rather than any one agent's branch).
+# Builds and publishes the Max Docker image either from an explicit manual ref or
+# automatically when a docker/<channel>/<version> Git tag is pushed.
 #
-# Usage: gh workflow run build-image --repo sipsorcery/maxheadroom \
-#          -f branch=claude/maxheadroom -f image=sipsorcery/webrtc-max-headroom:claude-<sha>
+# Tag example:
+#   git tag -a docker/test/2026.07.18-1 origin/feature/test -m "Test image"
+#   git push origin docker/test/2026.07.18-1
+#
+# Manual example:
+#   gh workflow run build-image --repo sipsorcery/maxheadroom \
+#     -f branch=feature/test \
+#     -f image=sipsorcery/webrtc-max-headroom:test-<sha>
 name: build-image
 
 on:
+  push:
+    tags:
+      - "docker/*/*"
   workflow_dispatch:
     inputs:
       branch:
         description: Branch (or ref) to build the image from
         required: true
       image:
-        description: Full image reference to tag and push, e.g. sipsorcery/webrtc-max-headroom:claude-<sha>
+        description: Full image reference to tag and push, e.g. sipsorcery/webrtc-max-headroom:test-<sha>
         required: true
       description:
         description: BUILD_DESCRIPTION shown on the /version endpoint and web page badge
@@ -23,6 +31,13 @@ on:
 permissions:
   contents: read
 
+env:
+  IMAGE_REPOSITORY: sipsorcery/webrtc-max-headroom
+
+concurrency:
+  group: build-image-${{ github.event_name == 'push' && github.ref || inputs.image }}
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -30,11 +45,72 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.branch }}
+          # A tag push builds exactly the tagged commit. Manual runs retain the
+          # existing ability to build any branch, tag or commit SHA.
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.branch }}
 
-      - name: Resolve short commit SHA
-        id: sha
-        run: echo "short=$(git rev-parse --short=8 HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Resolve build settings
+        id: settings
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TAG_NAME: ${{ github.ref_name }}
+          MANUAL_REF: ${{ inputs.branch }}
+          MANUAL_IMAGE: ${{ inputs.image }}
+          MANUAL_DESCRIPTION: ${{ inputs.description }}
+        run: |
+          set -euo pipefail
+
+          full_sha="$(git rev-parse HEAD)"
+          short_sha="$(git rev-parse --short=8 HEAD)"
+
+          if [[ "$EVENT_NAME" == "push" ]]; then
+            if [[ ! "$TAG_NAME" =~ ^docker/([a-z0-9][a-z0-9._-]{0,31})/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$ ]]; then
+              echo "::error::Expected tag docker/<channel>/<version>; got '$TAG_NAME'."
+              exit 1
+            fi
+
+            channel="${BASH_REMATCH[1]}"
+            version="${BASH_REMATCH[2]}"
+            docker_tag="${channel}-${version}"
+            if (( ${#docker_tag} > 128 )); then
+              echo "::error::Generated Docker tag is longer than 128 characters."
+              exit 1
+            fi
+
+            source_ref="$channel"
+            display_ref="$TAG_NAME"
+            description="Git tag $TAG_NAME"
+            image_tags=(
+              "$IMAGE_REPOSITORY:$docker_tag"
+              "$IMAGE_REPOSITORY:sha-$short_sha"
+            )
+
+            # Updating latest remains an explicit act: only a tag whose channel
+            # declares master or release is allowed to move it.
+            if [[ "$channel" == "master" || "$channel" == "release" ]]; then
+              image_tags+=("$IMAGE_REPOSITORY:latest")
+            fi
+          else
+            source_ref="$MANUAL_REF"
+            display_ref="$MANUAL_REF"
+            version="$short_sha"
+            description="${MANUAL_DESCRIPTION//$'\r'/ }"
+            description="${description//$'\n'/ }"
+            image_tags=("$MANUAL_IMAGE")
+          fi
+
+          {
+            echo "full_sha=$full_sha"
+            echo "short_sha=$short_sha"
+            echo "source_ref=$source_ref"
+            echo "display_ref=$display_ref"
+            echo "version=$version"
+            echo "description=$description"
+            echo "tags<<EOF"
+            printf '%s\n' "${image_tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -44,17 +120,37 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Build and push
+        id: image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: src/Max/Dockerfile
           push: true
-          tags: ${{ inputs.image }}
+          tags: ${{ steps.settings.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ steps.settings.outputs.full_sha }}
+            org.opencontainers.image.version=${{ steps.settings.outputs.version }}
+            org.opencontainers.image.ref.name=${{ steps.settings.outputs.display_ref }}
           build-args: |
-            GIT_BRANCH=${{ inputs.branch }}
-            GIT_SHA=${{ steps.sha.outputs.short }}
-            BUILD_DESCRIPTION=${{ inputs.description }}
+            GIT_BRANCH=${{ steps.settings.outputs.source_ref }}
+            GIT_SHA=${{ steps.settings.outputs.short_sha }}
+            BUILD_DESCRIPTION=${{ steps.settings.outputs.description }}
 
       - name: Summary
+        env:
+          IMAGE_TAGS: ${{ steps.settings.outputs.tags }}
+          SOURCE_REF: ${{ steps.settings.outputs.display_ref }}
+          SHORT_SHA: ${{ steps.settings.outputs.short_sha }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
         run: |
-          echo "Built and pushed \`${{ inputs.image }}\` from \`${{ inputs.branch }}\` @ \`${{ steps.sha.outputs.short }}\`." >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "Built and pushed:"
+            while IFS= read -r image; do
+              echo "- \`$image\`"
+            done <<< "$IMAGE_TAGS"
+            echo
+            echo "Source: \`$SOURCE_REF\` @ \`$SHORT_SHA\`"
+            echo
+            echo "Digest: \`$IMAGE_DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"
