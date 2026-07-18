@@ -8,7 +8,7 @@
 # Manual example:
 #   gh workflow run build-image --repo sipsorcery/maxheadroom \
 #     -f branch=feature/test \
-#     -f image=sipsorcery/webrtc-max-headroom:test-<sha>
+#     -f image=registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:test-<sha>
 name: build-image
 
 on:
@@ -21,7 +21,7 @@ on:
         description: Branch (or ref) to build the image from
         required: true
       image:
-        description: Full image reference to tag and push, e.g. sipsorcery/webrtc-max-headroom:test-<sha>
+        description: Full image reference to tag and push, e.g. registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:test-<sha>
         required: true
       description:
         description: BUILD_DESCRIPTION shown on the /version endpoint and web page badge
@@ -32,7 +32,7 @@ permissions:
   contents: read
 
 env:
-  IMAGE_REPOSITORY: sipsorcery/webrtc-max-headroom
+  IMAGE_NAME: webrtc-max-headroom
 
 concurrency:
   group: build-image-${{ github.event_name == 'push' && github.ref || inputs.image }}
@@ -58,11 +58,24 @@ jobs:
           MANUAL_REF: ${{ inputs.branch }}
           MANUAL_IMAGE: ${{ inputs.image }}
           MANUAL_DESCRIPTION: ${{ inputs.description }}
+          REGISTRY_REPOSITORY: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_URL }}
         run: |
           set -euo pipefail
 
           full_sha="$(git rev-parse HEAD)"
           short_sha="$(git rev-parse --short=8 HEAD)"
+          registry_repository="${REGISTRY_REPOSITORY%/}"
+          registry_repository="${registry_repository#https://}"
+          registry_repository="${registry_repository#http://}"
+          if [[ "$registry_repository" == "registry.digitalocean.com" ]]; then
+            registry_repository="$registry_repository/sipsorcery-demo"
+          fi
+          if [[ "$registry_repository" != "registry.digitalocean.com/sipsorcery-demo" ]]; then
+            echo "::error::DIGITAL_OCEAN_CONTAINER_REGISTRY_URL must identify registry.digitalocean.com/sipsorcery-demo."
+            exit 1
+          fi
+          registry_host="${registry_repository%%/*}"
+          image_repository="$registry_repository/$IMAGE_NAME"
 
           if [[ "$EVENT_NAME" == "push" ]]; then
             if [[ ! "$TAG_NAME" =~ ^docker/([a-z0-9][a-z0-9._-]{0,31})/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$ ]]; then
@@ -82,17 +95,17 @@ jobs:
             display_ref="$TAG_NAME"
             description="Git tag $TAG_NAME"
             image_tags=(
-              "$IMAGE_REPOSITORY:$docker_tag"
-              "$IMAGE_REPOSITORY:sha-$short_sha"
+              "$image_repository:$docker_tag"
+              "$image_repository:sha-$short_sha"
             )
-            primary_image="$IMAGE_REPOSITORY:$docker_tag"
+            primary_image="$image_repository:$docker_tag"
             promotion_target=""
 
             # Updating latest remains an explicit act: only a tag whose channel
             # declares master or release is allowed to move it or propose a
             # production deployment.
             if [[ "$channel" == "master" || "$channel" == "release" ]]; then
-              image_tags+=("$IMAGE_REPOSITORY:latest")
+              image_tags+=("$image_repository:latest")
               promotion_target="production"
             fi
           else
@@ -115,6 +128,7 @@ jobs:
             echo "display_ref=$display_ref"
             echo "version=$version"
             echo "description=$description"
+            echo "registry_host=$registry_host"
             echo "primary_image=$primary_image"
             echo "promotion_target=$promotion_target"
             echo "tags<<EOF"
@@ -126,8 +140,9 @@ jobs:
 
       - uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ${{ steps.settings.outputs.registry_host }}
+          username: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_PASSWORD }}
 
       - name: Build and push
         id: image
