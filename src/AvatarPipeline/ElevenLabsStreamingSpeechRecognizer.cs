@@ -11,7 +11,8 @@
 // Flow:
 //   * Write enqueues mic PCM blocks (non-blocking, called from the RTP receive path);
 //   * a sender task coalesces ~100ms of audio and sends it as base64 "input_audio_chunk"
-//     messages (audio_format=pcm_8000, so the 8kHz mic needs no resample);
+//     messages (audio_format=pcm_<sampleRate>, matching the mic decode rate - 16kHz on the
+//     Opus track, so no resample is needed between the track and the socket);
 //   * a receive loop raises OnRecognized on each "committed_transcript" (final) message;
 //     partial transcripts are ignored.
 //
@@ -42,8 +43,8 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
 {
     private static readonly ILogger logger = SIPSorcery.LogFactory.CreateLogger<ElevenLabsStreamingSpeechRecognizer>();
 
-    private const int SampleRate = 8000;          // The mic stream after G.711 decode.
-    private const int SendBatchSamples = 800;     // ~100ms of 8kHz audio per WebSocket message.
+    private readonly int _sampleRate;           // Rate of the PCM pushed into Write.
+    private readonly int _sendBatchSamples;     // ~100ms of audio per WebSocket message.
 
     private readonly string _apiKey;
     private readonly string _modelId;
@@ -64,11 +65,15 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
     /// <param name="apiKey">ElevenLabs API key (sent as the xi-api-key header).</param>
     /// <param name="modelId">Realtime STT model id (default "scribe_v2_realtime").</param>
     /// <param name="commitStrategy">Server commit strategy; "vad" lets the server segment utterances.</param>
-    public ElevenLabsStreamingSpeechRecognizer(string apiKey, string modelId = "scribe_v2_realtime", string commitStrategy = "vad")
+    /// <param name="sampleRate">Rate of the PCM pushed into Write; must match an audio_format
+    /// the realtime API accepts (pcm_8000 / pcm_16000).</param>
+    public ElevenLabsStreamingSpeechRecognizer(string apiKey, string modelId = "scribe_v2_realtime", string commitStrategy = "vad", int sampleRate = 8000)
     {
         _apiKey = apiKey;
         _modelId = string.IsNullOrWhiteSpace(modelId) ? "scribe_v2_realtime" : modelId;
         _commitStrategy = string.IsNullOrWhiteSpace(commitStrategy) ? "vad" : commitStrategy;
+        _sampleRate = sampleRate;
+        _sendBatchSamples = sampleRate / 10;
     }
 
     public async Task StartAsync()
@@ -83,7 +88,7 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
         _ws.Options.SetRequestHeader("xi-api-key", _apiKey);
 
         var uri = new Uri($"wss://api.elevenlabs.io/v1/speech-to-text/realtime" +
-                          $"?model_id={_modelId}&audio_format=pcm_{SampleRate}&commit_strategy={_commitStrategy}");
+                          $"?model_id={_modelId}&audio_format=pcm_{_sampleRate}&commit_strategy={_commitStrategy}");
         await _ws.ConnectAsync(uri, _cts.Token).ConfigureAwait(false);
 
         _sender = Task.Run(SendLoopAsync);
@@ -103,13 +108,13 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
     /// <summary>Coalesces queued PCM into ~100ms batches and sends them as base64 audio-chunk messages.</summary>
     private async Task SendLoopAsync()
     {
-        var batch = new List<short>(SendBatchSamples);
+        var batch = new List<short>(_sendBatchSamples);
         try
         {
             await foreach (var pcm in _audioQueue.Reader.ReadAllAsync(_cts.Token).ConfigureAwait(false))
             {
                 batch.AddRange(pcm);
-                if (batch.Count >= SendBatchSamples)
+                if (batch.Count >= _sendBatchSamples)
                 {
                     await SendAudioAsync(batch.ToArray()).ConfigureAwait(false);
                     batch.Clear();
@@ -135,7 +140,7 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
         {
             message_type = "input_audio_chunk",
             audio_base_64 = Convert.ToBase64String(bytes),
-            sample_rate = SampleRate,
+            sample_rate = _sampleRate,
         });
 
         var frame = Encoding.UTF8.GetBytes(payload);
