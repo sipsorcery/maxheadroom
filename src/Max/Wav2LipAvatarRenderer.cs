@@ -59,8 +59,8 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private const double MEL_PER_FRAME = 80.0 / FPS;
     private const float ZOOM = 1.25f;              // figure fills the frame (per reference).
     private const int ZOOM_TOP = 70;               // top crop offset in zoomed px.
-    private const int BG_EVERY = 3;                // re-render the slow background every Nth tick.
-    private const double CUBE_MOTION_CYCLE = 28.0;
+    private const int BG_EVERY = 3;                // held poses can reuse the background every Nth tick.
+    private const double CUBE_MOTION_CYCLE = 54.0;
 
     private readonly record struct CubePose(
         float VertexX,
@@ -72,25 +72,24 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private readonly record struct CubeKeyframe(double Seconds, CubePose Pose);
 
     // The original cel/CG background did not simply scroll. It held a perspective for several
-    // seconds, then the common corner and the three ruled planes swept through a short camera move.
-    // Repeated poses create the holds; the in-between poses push the corner around the frame and
-    // rotate all three planes as one object.
+    // seconds, then the common corner and the three ruled planes swept through a slow camera move.
+    // Transition keyframe times are proportional to the distance between their vertex positions,
+    // which keeps the vertex moving at a constant speed through each multi-leg sweep.
     private static readonly CubeKeyframe[] _cubeMotion =
     {
         new( 0.0, new(.46f, .76f,   0f, 17f, 15f)),
-        new( 6.0, new(.46f, .76f,   0f, 17f, 15f)),
-        new( 6.8, new(.12f, .55f, -28f, 35f, 12f)),
-        new( 7.6, new(.30f, .94f, -68f, 52f, 28f)),
-        new( 8.6, new(.39f, .66f, -92f, 26f, 43f)),
-        new(14.0, new(.39f, .66f, -92f, 26f, 43f)),
-        new(14.8, new(.88f, .72f, -48f, 42f, 18f)),
-        new(15.8, new(.68f, .18f,  10f, 20f, 51f)),
-        new(16.8, new(.58f, .56f,  38f, 45f, 21f)),
-        new(23.0, new(.58f, .56f,  38f, 45f, 21f)),
-        new(24.0, new(.86f, .86f,  72f, 30f, 55f)),
-        new(25.1, new(.10f, .63f,  31f, 57f, 17f)),
-        new(26.4, new(.46f, .76f,   0f, 17f, 15f)),
-        new(28.0, new(.46f, .76f,   0f, 17f, 15f)),
+        new( 8.0, new(.46f, .76f,   0f, 17f, 15f)),
+        new(11.6, new(.12f, .55f, -28f, 35f, 12f)),
+        new(15.4, new(.30f, .94f, -68f, 52f, 28f)),
+        new(18.0, new(.39f, .66f, -92f, 26f, 43f)),
+        new(26.0, new(.39f, .66f, -92f, 26f, 43f)),
+        new(29.4, new(.88f, .72f, -48f, 42f, 18f)),
+        new(33.3, new(.68f, .18f,  10f, 20f, 51f)),
+        new(36.0, new(.58f, .56f,  38f, 45f, 21f)),
+        new(44.0, new(.58f, .56f,  38f, 45f, 21f)),
+        new(46.6, new(.86f, .86f,  72f, 30f, 55f)),
+        new(51.6, new(.10f, .63f,  31f, 57f, 17f)),
+        new(54.0, new(.46f, .76f,   0f, 17f, 15f)),
     };
 
     public static readonly List<VideoFormat> SupportedFormats = new()
@@ -612,7 +611,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     {
         double t = idx / (double)FPS;
 
-        if (_bgCache == null || idx - _bgCacheIdx >= BG_EVERY || idx < _bgCacheIdx)
+        // The old three-frame cache made a moving vertex update at only 8.3fps. Preserve that
+        // saving while a pose is held, but render every 25fps tick during a camera sweep.
+        int backgroundEvery = CubeIsMoving(t) ? 1 : BG_EVERY;
+        if (_bgCache == null || idx - _bgCacheIdx >= backgroundEvery || idx < _bgCacheIdx)
         {
             _bgCache?.Dispose();
             _bgCache = RenderBackground(t);
@@ -763,9 +765,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
 
         CubePose pose = CubePoseAt(t);
         // A tiny analogue drift keeps held poses alive. The large, recognisable movement comes
-        // from the keyframes above rather than constant sine-wave wandering.
-        float vx = bw * pose.VertexX + (float)(2.5 * Math.Cos(t * 0.19));
-        float vy = bh * pose.VertexY + (float)(1.8 * Math.Sin(t * 0.17));
+        // from the keyframes above. Disable the drift during a sweep so its velocity stays constant.
+        float drift = CubeIsMoving(t) ? 0f : 1f;
+        float vx = bw * pose.VertexX + drift * (float)(2.5 * Math.Cos(t * 0.19));
+        float vy = bh * pose.VertexY + drift * (float)(1.8 * Math.Sin(t * 0.17));
 
         float diag = (float)Math.Sqrt(bw * bw + bh * bh);
         float R = 2f * diag;
@@ -848,7 +851,6 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         CubeKeyframe b = _cubeMotion[Math.Min(next, _cubeMotion.Length - 1)];
         double span = Math.Max(0.0001, b.Seconds - a.Seconds);
         float u = (float)Math.Clamp((seconds - a.Seconds) / span, 0.0, 1.0);
-        u = u * u * (3f - 2f * u); // smooth start/stop, like the held cel-animation camera moves.
 
         return new CubePose(
             Lerp(a.Pose.VertexX, b.Pose.VertexX, u),
@@ -856,6 +858,20 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             Lerp(a.Pose.RotationDeg, b.Pose.RotationDeg, u),
             Lerp(a.Pose.LeftAngleDeg, b.Pose.LeftAngleDeg, u),
             Lerp(a.Pose.RightAngleDeg, b.Pose.RightAngleDeg, u));
+    }
+
+    private static bool CubeIsMoving(double t)
+    {
+        double seconds = ((t % CUBE_MOTION_CYCLE) + CUBE_MOTION_CYCLE) % CUBE_MOTION_CYCLE;
+        int next = 1;
+        while (next < _cubeMotion.Length && seconds > _cubeMotion[next].Seconds)
+        {
+            next++;
+        }
+
+        CubePose a = _cubeMotion[Math.Max(0, next - 1)].Pose;
+        CubePose b = _cubeMotion[Math.Min(next, _cubeMotion.Length - 1)].Pose;
+        return a != b;
     }
 
     private static (float, float) UnitVector(float degrees)

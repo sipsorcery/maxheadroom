@@ -119,8 +119,8 @@ Invoke-WebRequest -Uri "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-G
 Sanity-check each engine without a browser: `dotnet run -- --tts-test "hi"`,
 `-- --stt-test "hi"` (a TTS→STT round trip), `-- --llm-test "hi"`,
 `-- --avatar-test <raw-pcm> <out-dir>`. The deterministic
-`-- --avatar-background-test <out-dir>` command renders a complete 28-second cycle of the
-three-plane background at 10fps, including its held perspectives and short camera sweeps.
+`-- --avatar-background-test <out-dir>` command renders a complete 54-second cycle of the
+three-plane background at 10fps, including its held perspectives and slow camera sweeps.
 
 | Engine | Conventional path (auto-detected) | Override |
 |---|---|---|
