@@ -98,7 +98,7 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
     /// clause plays; this pulls at most one clause ahead. Only one utterance/queue is spoken
     /// at a time (shares <see cref="SpeakAsync"/>'s lock).
     /// </summary>
-    public async Task SpeakQueueAsync(IAsyncEnumerable<string> texts)
+    public async Task SpeakQueueAsync(IAsyncEnumerable<string> texts, Func<bool> shouldContinue = null)
     {
         if (texts == null)
         {
@@ -115,37 +115,30 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
             }
 
             string currentText = enumerator.Current;
-            Task<(short[] samples, int sampleRate)> currentSynth = SynthesiseTimedAsync(currentText);
-            var clauseClock = Stopwatch.StartNew();     // time since the previous clause finished playing.
-            bool firstClause = true;
+            (short[] samples, int sampleRate) current = await TrySynthesiseAsync(currentText).ConfigureAwait(false);
 
             while (true)
             {
-                (short[] samples, int sampleRate) current;
-                try
+                if (shouldContinue != null && !shouldContinue())
                 {
-                    current = await currentSynth.ConfigureAwait(false);
-                }
-                catch (Exception excp)
-                {
-                    logger.LogError(excp, "Exception {Engine}.SpeakQueueAsync synthesising \"{Text}\".", EngineName, currentText);
-                    current = (null, 0);
+                    return;
                 }
 
-                // Start the NEXT clause's synthesis now (it only needs the shared engine, not
-                // playback) so it runs while this clause's audio is still being sent below.
-                bool hasNext = await enumerator.MoveNextAsync().ConfigureAwait(false);
-                string nextText = hasNext ? enumerator.Current : null;
-                Task<(short[] samples, int sampleRate)> nextSynth = hasNext ? SynthesiseTimedAsync(nextText) : null;
-
-                // Proof this clause's synthesis was actually prefetched rather than paid for
-                // serially: near-zero here means it was ready before the previous clause
-                // finished playing; anything above ~0 is genuine leftover wait.
-                if (!firstClause)
+                // Begin waiting for and synthesising the next clause before playing this one.
+                // Crucially, do not await it yet: first-clause playback must not be delayed while
+                // the LLM is still producing clause two.
+                async Task<(bool hasNext, string text, short[] samples, int sampleRate)> PrepareNextAsync()
                 {
-                    BenchMetrics.Record("tts_interclause_gap", clauseClock.Elapsed.TotalMilliseconds);
+                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        return (false, null, null, 0);
+                    }
+
+                    string text = enumerator.Current;
+                    var synthesised = await TrySynthesiseAsync(text).ConfigureAwait(false);
+                    return (true, text, synthesised.samples, synthesised.sampleRate);
                 }
-                firstClause = false;
+                var nextTask = PrepareNextAsync();
 
                 try
                 {
@@ -155,19 +148,43 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
                 {
                     logger.LogError(excp, "Exception {Engine}.SpeakQueueAsync playing \"{Text}\".", EngineName, currentText);
                 }
-                clauseClock.Restart();
 
-                if (!hasNext)
+                // Any synthesis time not hidden behind playback is the audible inter-clause gap.
+                var clauseClock = Stopwatch.StartNew();
+                var next = await nextTask.ConfigureAwait(false);
+                if (!next.hasNext)
                 {
                     break;
                 }
-                currentText = nextText;
-                currentSynth = nextSynth;
+                BenchMetrics.Record("tts_interclause_gap", clauseClock.Elapsed.TotalMilliseconds);
+
+                // Barge-in may have happened while the prefetched clause was synthesising.
+                // Never play that stale clause after the new turn has cancelled current audio.
+                if (shouldContinue != null && !shouldContinue())
+                {
+                    return;
+                }
+
+                currentText = next.text;
+                current = (next.samples, next.sampleRate);
             }
         }
         finally
         {
             _speakLock.Release();
+        }
+    }
+
+    private async Task<(short[] samples, int sampleRate)> TrySynthesiseAsync(string text)
+    {
+        try
+        {
+            return await SynthesiseTimedAsync(text).ConfigureAwait(false);
+        }
+        catch (Exception excp)
+        {
+            logger.LogError(excp, "Exception {Engine}.SpeakQueueAsync synthesising \"{Text}\".", EngineName, text);
+            return (null, 0);
         }
     }
 

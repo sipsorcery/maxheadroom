@@ -457,7 +457,9 @@ class Program
                     // Prefetches clause N+1's synthesis while clause N is still playing
                     // (see LipSyncTtsSpeaker's file header - the #13 investigation) instead
                     // of the strictly serial speak-one-clause-at-a-time loop this replaces.
-                    await lipSync.SpeakQueueAsync(CurrentTurnOnly()).ConfigureAwait(false);
+                    await lipSync.SpeakQueueAsync(
+                        CurrentTurnOnly(),
+                        () => IsCurrentTurn(myTurn)).ConfigureAwait(false);
                 }
                 else
                 {
