@@ -27,6 +27,8 @@
         .activity-entry.stt .activity-prefix { color: #5bd9f0; }
         .activity-entry.llm .activity-prefix { color: #e0a020; }
         .activity-empty { color: #6f8290; font-style: italic; }
+        .version-badge { margin: -8px 0 12px; color: #6b9cab; font-size: 0.75em; }
+        .version-badge:empty { display: none; }
     </style>
 </head>
 <body>
@@ -44,6 +46,7 @@
     </aside>
 
     <h2>Max Headroom WebRTC Avatar</h2>
+    <div class="version-badge" id="versionBadge"></div>
 
     <video controls autoplay playsinline id="videoCtl"></video>
 
@@ -207,7 +210,26 @@
             document.querySelector('#micStatus').textContent = "not connected";
         }
 
+        async function loadVersion() {
+            try {
+                const resp = await fetch(BASE_URL + '/version');
+                if (!resp.ok) return;
+                const version = await resp.json();
+                const parts = [];
+                if (version.branch && version.branch !== 'unknown') {
+                    parts.push(version.branch + (version.sha && version.sha !== 'unknown' ? ' @ ' + version.sha : ''));
+                }
+                if (version.models?.pipeline) parts.push(version.models.pipeline);
+                if (version.llmModel && version.llmModel !== 'not configured') parts.push(version.llmModel);
+                if (version.description) parts.push(version.description);
+                document.querySelector('#versionBadge').textContent = parts.join(' — ');
+            } catch (err) {
+                console.warn('Version lookup failed:', err);
+            }
+        }
+
         document.querySelector('#serverurl').value = BASE_URL;
         connectActivityStream(BASE_URL);
+        loadVersion();
     </script>
 </body>

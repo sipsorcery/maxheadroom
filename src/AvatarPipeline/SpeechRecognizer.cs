@@ -4,7 +4,8 @@
 // Description: Base class for the avatar's speech-to-text "recognisers". It owns the
 // shared streaming front-end - a simple energy-based voice-activity detector that
 // buffers the decoded 8kHz 16-bit mono microphone PCM (pushed in via Write), and once
-// it sees ~0.6s of trailing silence (or a hard length cap) hands the completed
+// it sees the configured amount of trailing silence (0.6s by default, or a hard
+// length cap) hands the completed
 // utterance to a single background worker. Concrete engines only implement
 // TranscribeAsync (utterance PCM in, text out): SherpaSpeechRecognizer (local,
 // in-process) and ElevenLabsSpeechRecognizer (cloud).
@@ -38,9 +39,22 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
     // VAD / segmentation tuning, all against the incoming 8kHz stream.
     protected const int SampleRate = 8000;
     private const double SilenceRmsThreshold = 350.0;               // RMS below this (16-bit) counts as silence.
-    private const int TrailingSilenceSamples = SampleRate * 6 / 10; // ~0.6s of silence ends an utterance.
+    private const int DefaultTrailingSilenceMilliseconds = 600;
+    private static readonly int TrailingSilenceMilliseconds = ReadTrailingSilenceMilliseconds();
+    private static readonly int TrailingSilenceSamples = SampleRate * TrailingSilenceMilliseconds / 1000;
     private const int MaxUtteranceSamples = SampleRate * 15;        // Hard cap so we always flush eventually.
     private const int MinUtteranceSamples = SampleRate * 3 / 10;    // Ignore blips shorter than ~0.3s.
+
+    /// <summary>The active silence duration used to finalize a buffered utterance.</summary>
+    public static int ActiveTrailingSilenceMilliseconds => TrailingSilenceMilliseconds;
+
+    private static int ReadTrailingSilenceMilliseconds()
+    {
+        var value = Environment.GetEnvironmentVariable("STT_TRAILING_SILENCE_MS");
+        return int.TryParse(value, out var milliseconds) && milliseconds is >= 200 and <= 2000
+            ? milliseconds
+            : DefaultTrailingSilenceMilliseconds;
+    }
 
     private readonly List<short> _utterance = new();
     private bool _hasSpeech;
@@ -81,7 +95,10 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
         await InitAsync().ConfigureAwait(false);
 
         _worker = Task.Run(ConsumeAsync);
-        logger.LogInformation("{Engine} speech recognition started. Speak to the avatar.", EngineName);
+        logger.LogInformation(
+            "{Engine} speech recognition started with {TrailingSilenceMs}ms endpointing. Speak to the avatar.",
+            EngineName,
+            ActiveTrailingSilenceMilliseconds);
     }
 
     /// <summary>Pushes a block of decoded 8kHz 16-bit mono PCM into the recogniser.</summary>

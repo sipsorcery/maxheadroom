@@ -20,6 +20,7 @@
 //   POST /say    - body = text. Speaks the text verbatim.
 //   POST /ask    - body = prompt. Runs the prompt through the LLM (if configured)
 //                  and speaks the reply (same path as speaking to it).
+//   GET  /version - build identity and active LLM/TTS/STT/renderer configuration.
 //
 // Configuration (environment variables, all optional):
 //   SHERPA_MODEL_DIR / SHERPA_STT_DIR / SHERPA_STT_PROVIDER - sherpa TTS/STT model
@@ -34,6 +35,7 @@
 //   VISEME_LEAD_MS       - ms to lead the mouth ahead of the audio (default 0).
 //   ELEVENLABS_API_KEY (+ ELEVENLABS_VOICE_ID/MODEL/STT_MODEL/STREAMING/...) - cloud
 //                          speech engines; when set they take priority for TTS + STT.
+//   STT_TRAILING_SILENCE_MS - 200..2000ms; legacy buffered STT defaults to 600ms.
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
@@ -252,6 +254,14 @@ class Program
         app.UseStaticFiles();
 
         app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
+        app.MapGet("/version", () => Results.Json(new
+        {
+            branch = Environment.GetEnvironmentVariable("GIT_BRANCH") ?? "unknown",
+            sha = Environment.GetEnvironmentVariable("GIT_SHA") ?? "unknown",
+            description = Environment.GetEnvironmentVariable("BUILD_DESCRIPTION") ?? "",
+            llmModel = DescribeLlmModel(),
+            models = DescribeModelConfig(),
+        }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
 
@@ -896,6 +906,30 @@ class Program
             Environment.GetEnvironmentVariable("LLM_API_KEY"));
     }
 
+    private static string DescribeLlmModel()
+    {
+        if (OpenAiRealtimeConfigured())
+        {
+            return _openAiRealtimeModel;
+        }
+
+        var gguf = Environment.GetEnvironmentVariable("LLM_GGUF");
+        if (string.IsNullOrWhiteSpace(gguf))
+        {
+            const string conventional = @"C:\tools\llm";
+            gguf = Directory.Exists(conventional)
+                ? Directory.EnumerateFiles(conventional, "*.gguf").FirstOrDefault()
+                : null;
+        }
+        if (!string.IsNullOrWhiteSpace(gguf) && File.Exists(gguf))
+        {
+            return $"local:{Path.GetFileName(gguf)}";
+        }
+
+        var model = Environment.GetEnvironmentVariable("LLM_MODEL");
+        return string.IsNullOrWhiteSpace(model) ? "not configured" : model;
+    }
+
     /// <summary>True if any TTS engine is configured (ElevenLabs or sherpa-onnx).</summary>
     private static bool TtsConfigured() =>
         OpenAiRealtimeConfigured() ||
@@ -908,6 +942,87 @@ class Program
     /// <summary>True if the in-process sherpa-onnx TTS is configured (a voice model directory).</summary>
     private static bool SherpaConfigured() =>
         !string.IsNullOrWhiteSpace(_sherpaModelDir) && Directory.Exists(_sherpaModelDir);
+
+    private static object DescribeModelConfig()
+    {
+        string llmEngine;
+        string ttsEngine;
+        string ttsModel;
+        string ttsVoice;
+        string sttEngine;
+        string sttModel;
+        int? sttTrailingSilenceMs;
+
+        if (OpenAiRealtimeConfigured())
+        {
+            llmEngine = "openai-realtime";
+            ttsEngine = "openai-realtime";
+            ttsModel = _openAiRealtimeModel;
+            ttsVoice = _openAiRealtimeVoice;
+            sttEngine = "openai-realtime";
+            sttModel = _openAiRealtimeTranscriptionModel;
+            sttTrailingSilenceMs = _openAiRealtimeSilenceMs;
+        }
+        else if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
+        {
+            llmEngine = DescribeConfiguredLlmEngine();
+            var kind = _elevenLabsStreaming ? "elevenlabs-streaming" : "elevenlabs";
+            ttsEngine = kind;
+            ttsModel = _elevenLabsModel;
+            ttsVoice = _elevenLabsVoiceId;
+            sttEngine = kind;
+            sttModel = _elevenLabsStreaming ? _elevenLabsSttRealtimeModel : _elevenLabsSttModel;
+            sttTrailingSilenceMs = _elevenLabsStreaming
+                ? null
+                : SpeechRecognizer.ActiveTrailingSilenceMilliseconds;
+        }
+        else
+        {
+            llmEngine = DescribeConfiguredLlmEngine();
+            var sherpaVoice = SherpaConfigured() ? DirectoryName(_sherpaModelDir) : null;
+            ttsEngine = SherpaConfigured() ? "sherpa" : "none";
+            ttsModel = sherpaVoice;
+            ttsVoice = sherpaVoice;
+            sttEngine = SherpaSpeechRecognizer.FilesPresent() ? "sherpa" : "none";
+            sttModel = SherpaSpeechRecognizer.FilesPresent()
+                ? DirectoryName(SherpaSpeechRecognizer.DefaultModelDir)
+                : null;
+            sttTrailingSilenceMs = SpeechRecognizer.ActiveTrailingSilenceMilliseconds;
+        }
+
+        var rendererKind = Environment.GetEnvironmentVariable("AVATAR_RENDERER");
+        if (string.IsNullOrWhiteSpace(rendererKind))
+        {
+            rendererKind = Wav2LipAvatarRenderer.FilesPresent() ? "wav2lip" : "cartoon";
+        }
+
+        return new
+        {
+            llmEngine,
+            llmModel = DescribeLlmModel(),
+            ttsEngine,
+            ttsModel,
+            ttsVoice,
+            sttEngine,
+            sttModel,
+            sttTrailingSilenceMs,
+            pipeline = OpenAiRealtimeConfigured() ? "openai-realtime-s2s-websocket" : "llm-stt-tts",
+            audioFormat = OpenAiRealtimeConfigured() ? "pcmu-in/pcm24-out" : null,
+            avatarRenderer = rendererKind,
+        };
+    }
+
+    private static string DescribeConfiguredLlmEngine()
+    {
+        if (_llm is LlamaSharpLlmClient)
+        {
+            return "llamasharp";
+        }
+        return _llm?.IsConfigured == true ? "openai-compatible" : "prompt-echo";
+    }
+
+    private static string DirectoryName(string path) =>
+        string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));
 
     [System.Runtime.InteropServices.DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
     private static extern uint TimeBeginPeriod(uint milliseconds);
