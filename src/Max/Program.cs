@@ -270,8 +270,8 @@ class Program
             var text = await ReadBody(request);
             var notReady = SpeakerNotReady();
             if (notReady != null) { return notReady; }
-            BeginTurn();
-            _ = _speaker.SpeakAsync(text);
+            var sayTurn = BeginTurn();
+            SpeakWithRecognizerGate(_speaker, text, sayTurn);
             return Results.Ok();
         });
 
@@ -409,6 +409,12 @@ class Program
         int myTurn = BeginTurn();
         var askClock = System.Diagnostics.Stopwatch.StartNew();
 
+        // Gate the streaming speech recogniser for the whole reply turn: while scribe is
+        // actively streaming it throttles the concurrent ElevenLabs TTS delivery, which
+        // starves the lip-sync pipeline. The recogniser's local VAD re-opens the gate if
+        // the user talks over Max (barge-in).
+        _recognizer?.SetAvatarSpeaking(true);
+
         // A streaming speaker consumes the LLM token stream directly over one WebSocket; tee the
         // sentences into a builder so we can still return the assembled reply text.
         if (speaker is IStreamingAvatarSpeaker streaming)
@@ -435,7 +441,16 @@ class Program
                 BenchMetrics.Record("llm_stream_complete", askClock.Elapsed.TotalMilliseconds);
             }
 
-            await streaming.SpeakStreamAsync(Tee());
+            try
+            {
+                await streaming.SpeakStreamAsync(Tee());
+            }
+            finally
+            {
+                // Only the still-current turn opens the gate; a superseded turn must leave
+                // it closed for the reply that barged in over it.
+                if (IsCurrentTurn(myTurn)) { _recognizer?.SetAvatarSpeaking(false); }
+            }
             benchmarkSession?.Record("audio_complete");
             var streamedText = streamed.ToString().Trim();
             _logger.LogInformation("LLM reply: {Reply}", streamedText);
@@ -459,6 +474,10 @@ class Program
             catch (Exception excp)
             {
                 _logger.LogError(excp, "Error speaking streamed reply.");
+            }
+            finally
+            {
+                if (IsCurrentTurn(myTurn)) { _recognizer?.SetAvatarSpeaking(false); }
             }
         });
 
@@ -490,6 +509,21 @@ class Program
         var text = reply.ToString().Trim();
         _logger.LogInformation("LLM reply: {Reply}", text);
         return text;
+    }
+
+    /// <summary>
+    /// Fire-and-forget speech that also gates the streaming speech recogniser (when configured)
+    /// for the duration of the utterance: a concurrently-active scribe session throttles the
+    /// ElevenLabs TTS stream, so the recogniser's upstream goes quiet while Max talks.
+    /// </summary>
+    private static void SpeakWithRecognizerGate(IAvatarSpeaker speaker, string text, int? turn = null)
+    {
+        var recognizer = _recognizer;
+        recognizer?.SetAvatarSpeaking(true);
+        _ = speaker.SpeakAsync(text).ContinueWith(
+            // A superseded turn must leave the gate closed for the reply that barged in over it.
+            _ => { if (turn == null || IsCurrentTurn(turn.Value)) { recognizer?.SetAvatarSpeaking(false); } },
+            TaskContinuationOptions.ExecuteSynchronously);
     }
 
     /// <summary>
@@ -684,7 +718,7 @@ class Program
                         {
                             if (benchmarkSession == null)
                             {
-                                _ = speaker.SpeakAsync("M-m-max Headroom here. Welcome to the show!");
+                                SpeakWithRecognizerGate(speaker, "M-m-max Headroom here. Welcome to the show!");
                             }
                         }
                         else

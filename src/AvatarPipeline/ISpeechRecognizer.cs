@@ -30,4 +30,11 @@ public interface ISpeechRecognizer : IDisposable
 
     /// <summary>Pushes a block of decoded 8kHz 16-bit mono PCM into the recogniser.</summary>
     void Write(short[] pcm);
+
+    /// <summary>Tells the recogniser whether the avatar is mid-reply. Only the streaming
+    /// engine uses it: it gates its upstream while Max speaks (a concurrently-active scribe
+    /// session throttles the ElevenLabs TTS stream on the same key, breaking lip-sync),
+    /// re-opening on local voice activity so barge-in still works. Batch engines segment
+    /// locally after the fact and ignore it.</summary>
+    void SetAvatarSpeaking(bool speaking) { }
 }

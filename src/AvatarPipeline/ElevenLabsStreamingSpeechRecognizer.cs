@@ -62,6 +62,19 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
     private bool _disposed;
     private int _otherMessages;
 
+    // Reply gate: while the avatar speaks we stop streaming to scribe (a concurrently-active
+    // scribe session throttles the ElevenLabs TTS stream on the same API key, which starves
+    // the lip-sync mel pipeline). A local energy VAD keeps watching the mic; real speech over
+    // Max re-opens the gate (barge-in), flushing a short ring buffer so the utterance onset
+    // isn't clipped. Gated-off audio is never sent, so scribe sees a quiet session.
+    private const double GateSpeechRmsThreshold = 350.0;      // Matches the batch VAD's.
+    private static readonly TimeSpan GateSpeechHold = TimeSpan.FromMilliseconds(800);
+    private readonly int _gateRingCapacity;                   // ~500ms of PCM in samples.
+    private readonly Queue<short[]> _gateRing = new();
+    private int _gateRingSamples;
+    private volatile bool _avatarSpeaking;
+    private long _lastLocalSpeechTicks;
+
     public event Action<string> OnRecognized;
 
     /// <param name="apiKey">ElevenLabs API key (sent as the xi-api-key header).</param>
@@ -76,6 +89,7 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
         _commitStrategy = string.IsNullOrWhiteSpace(commitStrategy) ? "vad" : commitStrategy;
         _sampleRate = sampleRate;
         _sendBatchSamples = sampleRate / 10;
+        _gateRingCapacity = sampleRate / 2;
 
         // Server-side VAD silence window before it commits an utterance. The API default
         // (1.5s) is far longer than the trailing silence a WebRTC mic actually streams
@@ -111,13 +125,74 @@ public sealed class ElevenLabsStreamingSpeechRecognizer : ISpeechRecognizer
         logger.LogInformation("ElevenLabs realtime speech recognition started (model {Model}). Speak to the avatar.", _modelId);
     }
 
+    public void SetAvatarSpeaking(bool speaking)
+    {
+        _avatarSpeaking = speaking;
+        if (!speaking)
+        {
+            // Reply over: flush any ring-buffered onset audio and listen normally again.
+            FlushGateRing();
+        }
+    }
+
     public void Write(short[] pcm)
     {
         if (_disposed || !_started || pcm == null || pcm.Length == 0)
         {
             return;
         }
+
+        if (_avatarSpeaking)
+        {
+            if (Rms(pcm) > GateSpeechRmsThreshold)
+            {
+                // Someone is talking over Max - barge-in. Re-open the upstream, leading
+                // with the buffered onset so scribe hears the start of the utterance.
+                Interlocked.Exchange(ref _lastLocalSpeechTicks, DateTime.UtcNow.Ticks);
+                FlushGateRing();
+            }
+            else if (DateTime.UtcNow.Ticks - Interlocked.Read(ref _lastLocalSpeechTicks) > GateSpeechHold.Ticks)
+            {
+                // Max speaking, user quiet: hold the gate closed, keeping a short ring of
+                // recent mic audio so a barge-in onset survives the VAD reaction time.
+                lock (_gateRing)
+                {
+                    _gateRing.Enqueue(pcm);
+                    _gateRingSamples += pcm.Length;
+                    while (_gateRingSamples > _gateRingCapacity && _gateRing.Count > 0)
+                    {
+                        _gateRingSamples -= _gateRing.Dequeue().Length;
+                    }
+                }
+                return;
+            }
+        }
+
         _audioQueue.Writer.TryWrite(pcm);
+    }
+
+    private void FlushGateRing()
+    {
+        lock (_gateRing)
+        {
+            while (_gateRing.Count > 0)
+            {
+                _audioQueue.Writer.TryWrite(_gateRing.Dequeue());
+            }
+            _gateRingSamples = 0;
+        }
+    }
+
+    /// <summary>Root-mean-square amplitude of a 16-bit PCM block; cheap speech/silence test.</summary>
+    private static double Rms(short[] pcm)
+    {
+        double sumSq = 0;
+        for (int i = 0; i < pcm.Length; i++)
+        {
+            double s = pcm[i];
+            sumSq += s * s;
+        }
+        return Math.Sqrt(sumSq / pcm.Length);
     }
 
     /// <summary>Coalesces queued PCM into ~100ms batches and sends them as base64 audio-chunk messages.</summary>
