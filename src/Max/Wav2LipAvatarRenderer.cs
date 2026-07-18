@@ -1161,9 +1161,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         for (int i = 0; i < count; i++)
         {
             var bgr = RenderFrame(NextMouth(), i);
-            // Save every 10th frame, plus the pose-snap window around t=3.7s (frames 92-98)
-            // so liveness glitches are captured.
-            if (i % 10 != 0 && !(i >= 92 && i <= 98))
+            // Save every 10th frame, the pose-snap window around t=3.7s (frames 92-98)
+            // so liveness glitches are captured, and every blink-active frame so the
+            // lid animation can be reviewed frame by frame.
+            if (i % 10 != 0 && !(i >= 92 && i <= 98) && BlinkAmount(i / (double)FPS) <= 0)
             {
                 continue;
             }
