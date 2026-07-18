@@ -81,6 +81,7 @@ class Program
     private static IAvatarSpeaker _speaker;
     private static ISpeechRecognizer _recognizer;
     private static ILlmClient _llm;
+    private static OpenAiRealtimeSession _openAiRealtimeSession;
 
     private static string _sherpaModelDir;
     private static string _elevenLabsKey;
@@ -89,6 +90,12 @@ class Program
     private static string _elevenLabsSttModel;
     private static string _elevenLabsSttRealtimeModel;
     private static bool _elevenLabsStreaming;
+    private static string _openAiApiKey;
+    private static bool _openAiRealtimeEnabled;
+    private static string _openAiRealtimeModel;
+    private static string _openAiRealtimeVoice;
+    private static string _openAiRealtimeTranscriptionModel;
+    private static int _openAiRealtimeSilenceMs;
     private static int _visemeLeadMs = 0;
     private static bool _waitForIceGatheringToSendAnswer;
     private static string _stunUrl = string.Empty;
@@ -139,6 +146,17 @@ class Program
         _elevenLabsSttModel = Environment.GetEnvironmentVariable("ELEVENLABS_STT_MODEL") ?? "scribe_v1";
         _elevenLabsSttRealtimeModel = Environment.GetEnvironmentVariable("ELEVENLABS_STT_REALTIME_MODEL") ?? "scribe_v2_realtime";
         _elevenLabsStreaming = string.Equals(Environment.GetEnvironmentVariable("ELEVENLABS_STREAMING"), "true", StringComparison.OrdinalIgnoreCase);
+        _openAiApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+        _openAiRealtimeEnabled = string.Equals(
+            Environment.GetEnvironmentVariable("OPENAI_REALTIME_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
+        _openAiRealtimeModel = Environment.GetEnvironmentVariable("OPENAI_REALTIME_MODEL") ?? "gpt-realtime-2.1-mini";
+        _openAiRealtimeVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_VOICE") ?? "marin";
+        _openAiRealtimeTranscriptionModel =
+            Environment.GetEnvironmentVariable("OPENAI_REALTIME_TRANSCRIPTION_MODEL") ?? "gpt-4o-mini-transcribe";
+        _openAiRealtimeSilenceMs = int.TryParse(
+            Environment.GetEnvironmentVariable("OPENAI_REALTIME_SILENCE_MS"), out var realtimeSilence)
+            ? realtimeSilence
+            : 400;
         if (int.TryParse(Environment.GetEnvironmentVariable("VISEME_LEAD_MS"), out var lead)) { _visemeLeadMs = lead; }
         bool.TryParse(Environment.GetEnvironmentVariable("WAIT_FOR_ICE_GATHERING_TO_SEND_ANSWER"), out _waitForIceGatheringToSendAnswer);
         _stunUrl = Environment.GetEnvironmentVariable("STUN_URL");
@@ -256,7 +274,15 @@ class Program
             var text = await ReadBody(request);
             var notReady = SpeakerNotReady();
             if (notReady != null) { return notReady; }
-            _ = _speaker.SpeakAsync(text);
+            if (_openAiRealtimeSession != null)
+            {
+                _ = _openAiRealtimeSession.AskTextAsync(
+                    $"Repeat this text exactly, without adding or changing any words: {text}");
+            }
+            else
+            {
+                _ = _speaker.SpeakAsync(text);
+            }
             return Results.Ok();
         });
 
@@ -376,6 +402,14 @@ class Program
 
     private static async Task<string> AskAsync(string prompt, BenchmarkTimeline timeline)
     {
+        var realtime = _openAiRealtimeSession;
+        if (realtime != null)
+        {
+            var realtimeReply = await realtime.AskTextAsync(prompt, timeline).ConfigureAwait(false);
+            _logger.LogInformation("OpenAI Realtime reply: {Reply}", realtimeReply);
+            return realtimeReply;
+        }
+
         // Capture the speaker so a mid-stream disconnect (which nulls _speaker) can't throw inside
         // the background consumer below; bail quietly if the avatar can't speak right now.
         var speaker = _speaker;
@@ -589,9 +623,43 @@ class Program
         audioSource.OnAudioSourceEncodedSample += pc.SendAudio;
         pc.OnAudioFormatsNegotiated += formats => audioSource.SetAudioSourceFormat(formats.First());
 
-        IAvatarSpeaker speaker = CreateSpeaker(videoSource, audioSource);
+        IAvatarSpeaker speaker = OpenAiRealtimeConfigured() ? null : CreateSpeaker(videoSource, audioSource);
         ISpeechRecognizer recognizer = null;
-        if (speaker != null)
+        OpenAiRealtimeSession realtimeSession = null;
+        if (OpenAiRealtimeConfigured())
+        {
+            realtimeSession = new OpenAiRealtimeSession(
+                _openAiApiKey,
+                _openAiRealtimeModel,
+                _openAiRealtimeVoice,
+                _openAiRealtimeTranscriptionModel,
+                _openAiRealtimeSilenceMs,
+                videoSource,
+                audioSource,
+                () => benchmarkSession?.Timeline);
+            realtimeSession.InputTranscript += text => PublishUiEvent("stt", text);
+            realtimeSession.OutputTranscript += text => PublishUiEvent("llm", text);
+
+            var micDecoder = new AudioEncoder();
+            var pcmuFormat = new AudioFormat(SDPWellKnownMediaFormatsEnum.PCMU);
+            pc.OnAudioFrameReceived += frame =>
+            {
+                try
+                {
+                    if (benchmarkSession != null)
+                    {
+                        benchmarkSession.RecordReceivedAudio(
+                            micDecoder.DecodeAudio(frame.EncodedAudio, pcmuFormat));
+                    }
+                    realtimeSession.WritePcmu(frame.EncodedAudio);
+                }
+                catch (Exception excp)
+                {
+                    _logger.LogWarning("Failed to forward microphone audio to OpenAI Realtime: {Error}", excp.Message);
+                }
+            };
+        }
+        else if (speaker != null)
         {
             // Speech-to-text: decode the received microphone RTP (PCMU -> 8kHz PCM) and feed the STT engine.
             // Recognised utterances run through the same LLM->speak path as /ask, so typing a prompt and
@@ -632,11 +700,20 @@ class Program
                     _audioSource = audioSource;
                     _speaker = speaker;
                     _recognizer = recognizer;
+                    _openAiRealtimeSession = realtimeSession;
                     try
                     {
                         await audioSource.StartAudio();
                         await videoSource.StartVideo();
-                        if (speaker != null)
+                        if (realtimeSession != null)
+                        {
+                            await realtimeSession.StartAsync();
+                            if (benchmarkSession == null)
+                            {
+                                _ = realtimeSession.AskTextAsync("Briefly greet the viewer.");
+                            }
+                        }
+                        else if (speaker != null)
                         {
                             // A benchmark peer needs a controlled silence-to-speech transition.
                             // Its deterministic microphone input supplies the first utterance;
@@ -670,7 +747,18 @@ class Program
                     await videoSource.CloseVideo();
                     videoSource.Dispose();
                     recognizer?.Dispose();
-                    if (_videoSource == videoSource) { _videoSource = null; _audioSource = null; _speaker = null; _recognizer = null; }
+                    if (realtimeSession != null)
+                    {
+                        await realtimeSession.DisposeAsync();
+                    }
+                    if (_videoSource == videoSource)
+                    {
+                        _videoSource = null;
+                        _audioSource = null;
+                        _speaker = null;
+                        _recognizer = null;
+                        _openAiRealtimeSession = null;
+                    }
                     break;
             }
         };
@@ -690,9 +778,9 @@ class Program
         {
             return Results.BadRequest("No active call. Connect a viewer in the browser first.");
         }
-        if (_speaker == null)
+        if (_speaker == null && _openAiRealtimeSession == null)
         {
-            return Results.BadRequest("No TTS configured. Download a voice folder to C:\\tools\\sherpa-tts or set SHERPA_MODEL_DIR / ELEVENLABS_API_KEY, then restart.");
+            return Results.BadRequest("No speech engine configured. Set OPENAI_REALTIME_ENABLED with OPENAI_API_KEY, or configure ElevenLabs/sherpa, then restart.");
         }
         return null;
     }
@@ -911,6 +999,10 @@ class Program
     /// filename, the configured endpoint model, or "not configured" (prompt-echo fallback).</summary>
     private static string DescribeLlmModel()
     {
+        if (OpenAiRealtimeConfigured())
+        {
+            return _openAiRealtimeModel;
+        }
         var gguf = Environment.GetEnvironmentVariable("LLM_GGUF");
         if (!string.IsNullOrWhiteSpace(gguf) && File.Exists(gguf))
         {
@@ -922,7 +1014,12 @@ class Program
 
     /// <summary>True if any TTS engine is configured (ElevenLabs or sherpa-onnx).</summary>
     private static bool TtsConfigured() =>
-        !string.IsNullOrWhiteSpace(_elevenLabsKey) || SherpaConfigured();
+        OpenAiRealtimeConfigured() ||
+        !string.IsNullOrWhiteSpace(_elevenLabsKey) ||
+        SherpaConfigured();
+
+    private static bool OpenAiRealtimeConfigured() =>
+        _openAiRealtimeEnabled && !string.IsNullOrWhiteSpace(_openAiApiKey);
 
     /// <summary>True if the in-process sherpa-onnx TTS is configured (a voice model directory).</summary>
     private static bool SherpaConfigured() =>
@@ -933,7 +1030,14 @@ class Program
     private static object DescribeModelConfig()
     {
         string ttsEngine, ttsVoice, sttEngine, sttModel;
-        if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
+        if (OpenAiRealtimeConfigured())
+        {
+            ttsEngine = "openai-realtime";
+            ttsVoice = _openAiRealtimeVoice;
+            sttEngine = "openai-realtime";
+            sttModel = _openAiRealtimeTranscriptionModel;
+        }
+        else if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
         {
             var kind = _elevenLabsStreaming ? "elevenlabs-streaming" : "elevenlabs";
             ttsEngine = kind; ttsVoice = _elevenLabsVoiceId;
@@ -955,7 +1059,11 @@ class Program
             ttsVoice,
             sttEngine,
             sttModel,
-            sttTrailingSilenceMs = SpeechRecognizer.ActiveTrailingSilenceMilliseconds,
+            sttTrailingSilenceMs = OpenAiRealtimeConfigured()
+                ? _openAiRealtimeSilenceMs
+                : SpeechRecognizer.ActiveTrailingSilenceMilliseconds,
+            pipeline = OpenAiRealtimeConfigured() ? "openai-realtime-s2s-websocket" : "llm-stt-tts",
+            audioFormat = OpenAiRealtimeConfigured() ? "pcmu" : null,
             avatarRenderer = rendererKind,
         };
         static string DirName(string path) => string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));
