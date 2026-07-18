@@ -144,7 +144,7 @@ class Program
         _openAiRealtimeEnabled = string.Equals(
             Environment.GetEnvironmentVariable("OPENAI_REALTIME_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
         _openAiRealtimeModel = Environment.GetEnvironmentVariable("OPENAI_REALTIME_MODEL") ?? "gpt-realtime-2.1-mini";
-        _openAiRealtimeVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_VOICE") ?? "marin";
+        _openAiRealtimeVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_VOICE") ?? "cedar";
         _openAiRealtimeTranscriptionModel =
             Environment.GetEnvironmentVariable("OPENAI_REALTIME_TRANSCRIPTION_MODEL") ?? "gpt-4o-mini-transcribe";
         _openAiRealtimeSilenceMs = int.TryParse(
