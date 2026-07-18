@@ -129,6 +129,7 @@ Sanity-check each engine without a browser: `dotnet run -- --tts-test "hi"`,
 | Persona / matte | `C:\tools\wav2lip\persona.{jpg,png,webp}` / `persona_alpha.png` | `NEURAL_PERSONA` / `NEURAL_MATTE` |
 | Face box / eyes | baked defaults for the bundled persona | `NEURAL_FACE_BOX` / `NEURAL_EYES` |
 | Renderer choice | `wav2lip` when its files exist, else the cartoon | `AVATAR_RENDERER` (`wav2lip`/`cartoon`) |
+| Legacy STT endpointing | 600ms trailing silence | `STT_TRAILING_SILENCE_MS` (200–2000; 400ms is the measured low-latency setting) |
 
 When a model folder is missing the app degrades gracefully (cartoon renderer, verbatim
 replies, speaking without listening) — and the sections below describe the cloud
@@ -215,9 +216,16 @@ Build from the repository root (the project references other projects in this re
 
 ```powershell
 docker build `
-  -f examples/WebRTCExamples/WebRTCMaxHeadroom/Dockerfile `
+  -f src/Max/Dockerfile `
+  --build-arg GIT_BRANCH=codex/my-branch `
+  --build-arg GIT_SHA=$(git rev-parse --short=8 HEAD) `
+  --build-arg BUILD_DESCRIPTION="candidate build" `
   -t sipsorcery/webrtc-max-headroom:local .
 ```
+
+The optional build arguments are exposed by `GET /version` together with the active
+LLM, TTS, STT, endpointing, audio and renderer configuration. The web page displays
+the same build identity and pipeline in a small badge under the title.
 
 The supplied Compose file maps the conventional `C:\tools` model tree into the
 container and configures all of the Linux model paths. From this directory:
