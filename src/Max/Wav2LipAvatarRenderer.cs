@@ -60,6 +60,38 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private const float ZOOM = 1.25f;              // figure fills the frame (per reference).
     private const int ZOOM_TOP = 70;               // top crop offset in zoomed px.
     private const int BG_EVERY = 3;                // re-render the slow background every Nth tick.
+    private const double CUBE_MOTION_CYCLE = 28.0;
+
+    private readonly record struct CubePose(
+        float VertexX,
+        float VertexY,
+        float RotationDeg,
+        float LeftAngleDeg,
+        float RightAngleDeg);
+
+    private readonly record struct CubeKeyframe(double Seconds, CubePose Pose);
+
+    // The original cel/CG background did not simply scroll. It held a perspective for several
+    // seconds, then the common corner and the three ruled planes swept through a short camera move.
+    // Repeated poses create the holds; the in-between poses push the corner around the frame and
+    // rotate all three planes as one object.
+    private static readonly CubeKeyframe[] _cubeMotion =
+    {
+        new( 0.0, new(.46f, .76f,   0f, 17f, 15f)),
+        new( 6.0, new(.46f, .76f,   0f, 17f, 15f)),
+        new( 6.8, new(.12f, .55f, -28f, 35f, 12f)),
+        new( 7.6, new(.30f, .94f, -68f, 52f, 28f)),
+        new( 8.6, new(.39f, .66f, -92f, 26f, 43f)),
+        new(14.0, new(.39f, .66f, -92f, 26f, 43f)),
+        new(14.8, new(.88f, .72f, -48f, 42f, 18f)),
+        new(15.8, new(.68f, .18f,  10f, 20f, 51f)),
+        new(16.8, new(.58f, .56f,  38f, 45f, 21f)),
+        new(23.0, new(.58f, .56f,  38f, 45f, 21f)),
+        new(24.0, new(.86f, .86f,  72f, 30f, 55f)),
+        new(25.1, new(.10f, .63f,  31f, 57f, 17f)),
+        new(26.4, new(.46f, .76f,   0f, 17f, 15f)),
+        new(28.0, new(.46f, .76f,   0f, 17f, 15f)),
+    };
 
     public static readonly List<VideoFormat> SupportedFormats = new()
     {
@@ -719,9 +751,9 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         return ph >= 0 && ph < 0.20 ? 1.0 - Math.Abs(ph / 0.10 - 1.0) : 0.0;
     }
 
-    // --- Background (port of the sidecar's isometric room-corner louvres) -----------------
+    // --- Background (three-plane ruled room from the original Max footage) ----------------
 
-    private SKBitmap RenderBackground(double t)
+    private static SKBitmap RenderBackground(double t)
     {
         // Half resolution (the upscale softens like the reference's VHS bloom).
         int bw = WIDTH / 2, bh = HEIGHT / 2;
@@ -729,36 +761,38 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         using var canvas = new SKCanvas(bmp);
         canvas.Clear(SKColors.Black);
 
-        float vx = (float)(bw * 0.46 + 20 * Math.Cos(t * 0.13));
-        float vy = (float)(bh * 0.76 + 12 * Math.Sin(t * 0.11));
-        // Shallow, near-symmetric louvres per the reference (~15-18 deg from horizontal), meeting at
-        // the central vertical seam - not the old steep 45 deg left wall.
-        double aL = (17.0 + 3.0 * Math.Sin(t * 0.08)) * Math.PI / 180.0;
-        double aR = (15.0 + 3.0 * Math.Sin(t * 0.06 + 1.0)) * Math.PI / 180.0;
+        CubePose pose = CubePoseAt(t);
+        // A tiny analogue drift keeps held poses alive. The large, recognisable movement comes
+        // from the keyframes above rather than constant sine-wave wandering.
+        float vx = bw * pose.VertexX + (float)(2.5 * Math.Cos(t * 0.19));
+        float vy = bh * pose.VertexY + (float)(1.8 * Math.Sin(t * 0.17));
+
         float diag = (float)Math.Sqrt(bw * bw + bh * bh);
         float R = 2f * diag;
         const float spacing = 13f;
-        float phWall = (float)(t * 5.0 % spacing);
-        float phFloor = (float)(t * 4.0 % spacing);
+        float phWall = (float)(t * 0.75 % spacing);
+        float phFloor = (float)(t * 0.55 % spacing);
 
-        var dL = ((float)-Math.Cos(aL), (float)Math.Sin(aL));
-        var dR = ((float)Math.Cos(aR), (float)Math.Sin(aR));
-        float degL = (float)(Math.Atan2(dL.Item2, dL.Item1) * 180.0 / Math.PI);
-        float degR = (float)(Math.Atan2(dR.Item2, dR.Item1) * 180.0 / Math.PI);
+        float topDeg = -90f + pose.RotationDeg;
+        float degL = 180f - pose.LeftAngleDeg + pose.RotationDeg;
+        float degR = pose.RightAngleDeg + pose.RotationDeg;
+        var dTop = UnitVector(topDeg);
+        var dL = UnitVector(degL);
+        var dR = UnitVector(degR);
 
-        // (wedge start, wedge end, rule dir or null for floor, hue)
+        // (wedge start, wedge end, rule direction, hue, travelling phase)
         // hue0 is HALF the final Skia hue (it is *2 below). Per the reference: left wall magenta
         // (~300), right wall green (~120), floor a purple blend behind the shoulders.
-        var regions = new (float a1, float a2, (float, float)? dir, float hue)[]
+        var regions = new (float a1, float a2, (float, float) dir, float hue, float phase)[]
         {
-            (degL, 270f, dL, 150f),     // left wall  -> ~300 magenta.
-            (-90f, degR, dR, 60f),      // right wall -> ~120 green.
-            (degR, degL, null, 30f),    // floor: rules parallel to the LEFT wall's (~60 yellow).
+            (degL, topDeg + 360f, dL, 150f, phWall), // left wall  -> ~300 magenta.
+            (topDeg, degR, dR, 60f, phWall),         // right wall -> ~120 green.
+            (degR, degL, dTop, 30f, phFloor),        // third plane -> ~60 yellow.
         };
 
         for (int f = 0; f < regions.Length; f++)
         {
-            var (a1, a2, dir, hue0) = regions[f];
+            var (a1, a2, dir, hue0, phase) = regions[f];
             float hue = (float)(hue0 + 8 * Math.Sin(t * 0.07 + f * 2.1)) * 2f;   // Skia hue is 0..360.
 
             using var wedge = new SKPath();
@@ -777,40 +811,60 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             using var halo = new SKPaint { IsAntialias = true, StrokeWidth = 4, Color = SKColor.FromHsv(hue, 84f, 45f) };
             using var core = new SKPaint { IsAntialias = true, StrokeWidth = 1, Color = SKColor.FromHsv(hue - 12f, 51f, 100f) };
 
-            if (dir.HasValue)
+            var (dx, dy) = dir;
+            // Offset each infinite rule along its perpendicular. Clipping turns the same line
+            // family into one face of the room, and rotating the family with the face is what
+            // creates the original's dramatic "camera orbit" rather than a sliding wallpaper.
+            float nx = -dy, ny = dx;
+            for (int k = -40; k <= 40; k++)
             {
-                var (dx, dy) = dir.Value;
-                for (int k = 0; k < 80; k++)
-                {
-                    float fy = vy - (k * spacing + phWall);
-                    if (fy < -diag) { break; }
-                    canvas.DrawLine(vx, fy, vx + dx * R, fy + dy * R, halo);
-                    canvas.DrawLine(vx, fy, vx + dx * R, fy + dy * R, core);
-                }
-            }
-            else
-            {
-                var (dx, dy) = dL;
-                float px2 = (float)Math.Sin(aL), py2 = (float)Math.Cos(aL);   // step dir.
-                for (int m = -40; m <= 40; m++)
-                {
-                    float off = m * spacing + phFloor;
-                    float px = vx + px2 * off, py = vy + py2 * off;
-                    canvas.DrawLine(px - dx * R, py - dy * R, px + dx * R, py + dy * R, halo);
-                    canvas.DrawLine(px - dx * R, py - dy * R, px + dx * R, py + dy * R, core);
-                }
+                float off = k * spacing + phase;
+                float px = vx + nx * off, py = vy + ny * off;
+                canvas.DrawLine(px - dx * R, py - dy * R, px + dx * R, py + dy * R, halo);
+                canvas.DrawLine(px - dx * R, py - dy * R, px + dx * R, py + dy * R, core);
             }
             canvas.Restore();
         }
 
         // Faint fold + seams.
         using var seam = new SKPaint { IsAntialias = true, StrokeWidth = 1, Color = new SKColor(16, 16, 24) };
-        canvas.DrawLine(vx, vy, vx, vy - R, seam);
+        canvas.DrawLine(vx, vy, vx + dTop.Item1 * R, vy + dTop.Item2 * R, seam);
         canvas.DrawLine(vx, vy, vx + dL.Item1 * R, vy + dL.Item2 * R, seam);
         canvas.DrawLine(vx, vy, vx + dR.Item1 * R, vy + dR.Item2 * R, seam);
 
         return bmp;
     }
+
+    private static CubePose CubePoseAt(double t)
+    {
+        double seconds = ((t % CUBE_MOTION_CYCLE) + CUBE_MOTION_CYCLE) % CUBE_MOTION_CYCLE;
+        int next = 1;
+        while (next < _cubeMotion.Length && seconds > _cubeMotion[next].Seconds)
+        {
+            next++;
+        }
+
+        CubeKeyframe a = _cubeMotion[Math.Max(0, next - 1)];
+        CubeKeyframe b = _cubeMotion[Math.Min(next, _cubeMotion.Length - 1)];
+        double span = Math.Max(0.0001, b.Seconds - a.Seconds);
+        float u = (float)Math.Clamp((seconds - a.Seconds) / span, 0.0, 1.0);
+        u = u * u * (3f - 2f * u); // smooth start/stop, like the held cel-animation camera moves.
+
+        return new CubePose(
+            Lerp(a.Pose.VertexX, b.Pose.VertexX, u),
+            Lerp(a.Pose.VertexY, b.Pose.VertexY, u),
+            Lerp(a.Pose.RotationDeg, b.Pose.RotationDeg, u),
+            Lerp(a.Pose.LeftAngleDeg, b.Pose.LeftAngleDeg, u),
+            Lerp(a.Pose.RightAngleDeg, b.Pose.RightAngleDeg, u));
+    }
+
+    private static (float, float) UnitVector(float degrees)
+    {
+        double radians = degrees * Math.PI / 180.0;
+        return ((float)Math.Cos(radians), (float)Math.Sin(radians));
+    }
+
+    private static float Lerp(float a, float b, float t) => a + (b - a) * t;
 
     // --- VHS grade + BGR conversion --------------------------------------------------------
 
@@ -1056,6 +1110,28 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
               }).ToArray();
 
     // --- Offline smoke test ----------------------------------------------------------------
+
+    /// <summary>Renders one complete background motion cycle as PNGs without loading the
+    /// persona or Wav2Lip model. The result is intended to be assembled at 10fps for review.</summary>
+    public static void TestRenderBackgroundFrames(string outDir, int fps = 10)
+    {
+        Directory.CreateDirectory(outDir);
+        int count = (int)(CUBE_MOTION_CYCLE * fps);
+        for (int i = 0; i <= count; i++)
+        {
+            double t = i / (double)fps;
+            using var half = RenderBackground(t);
+            using var full = new SKBitmap(new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Opaque));
+            using (var canvas = new SKCanvas(full))
+            {
+                canvas.DrawBitmap(half, new SKRect(0, 0, WIDTH, HEIGHT));
+            }
+            using var image = SKImage.FromBitmap(full);
+            using var data = image.Encode(SKEncodedImageFormat.Png, 90);
+            using var fs = File.OpenWrite(Path.Combine(outDir, $"cube_{i:D3}.png"));
+            data.SaveTo(fs);
+        }
+    }
 
     /// <summary>Renders <paramref name="count"/> frames driven by <paramref name="pcm16"/> to
     /// PNGs in <paramref name="outDir"/> - validates the whole in-process pipeline with no

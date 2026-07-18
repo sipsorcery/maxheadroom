@@ -189,6 +189,18 @@ class Program
             return;
         }
 
+        // Render one deterministic cycle of the animated three-plane background and exit:
+        //   --avatar-background-test <out-dir>
+        int backgroundTestIdx = Array.IndexOf(argv, "--avatar-background-test");
+        if (backgroundTestIdx >= 0 && backgroundTestIdx + 1 < argv.Length)
+        {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            Wav2LipAvatarRenderer.TestRenderBackgroundFrames(argv[backgroundTestIdx + 1]);
+            _logger.LogInformation("Rendered the background motion cycle in {Ms} ms to {Dir}.",
+                sw.ElapsedMilliseconds, argv[backgroundTestIdx + 1]);
+            return;
+        }
+
         // Render in-process Wav2Lip frames from raw PCM to PNGs and exit:
         //   --avatar-test <raw-int16-pcm> <out-dir>
         int avatarTestIdx = Array.IndexOf(argv, "--avatar-test");
