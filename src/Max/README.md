@@ -227,11 +227,14 @@ The optional build arguments are exposed by `GET /version` together with the act
 LLM, TTS, STT, endpointing, audio and renderer configuration. The web page displays
 the same build identity and pipeline in a small badge under the title.
 
-### Automated Docker Hub builds
+### Automated DigitalOcean Container Registry builds
 
 Pushing a Git tag named `docker/<channel>/<version>` automatically builds the commit
-the tag points to and publishes it to Docker Hub. For example, to build the current
-commit:
+the tag points to and publishes it to the DigitalOcean Container Registry. The
+workflow uses the `DIGITAL_OCEAN_CONTAINER_REGISTRY_URL`,
+`DIGITAL_OCEAN_CONTAINER_REGISTRY_USERNAME`, and
+`DIGITAL_OCEAN_CONTAINER_REGISTRY_PASSWORD` Actions secrets. For example, to build
+the current commit:
 
 ```powershell
 git tag -a docker/test/2026.07.18-1 -m "Test image"
@@ -250,13 +253,14 @@ git push origin docker/test/2026.07.18-1
 The example publishes these immutable image references:
 
 ```text
-sipsorcery/webrtc-max-headroom:test-2026.07.18-1
-sipsorcery/webrtc-max-headroom:sha-0123abcd
+registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:test-2026.07.18-1
+registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:sha-0123abcd
 ```
 
 The `channel` is an image/build label; it does not select the source branch. The Git
 commit to which the tag points is always the source of the build. A `master` or
-`release` channel also updates `sipsorcery/webrtc-max-headroom:latest`. Build tags
+`release` channel also updates
+`registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:latest`. Build tags
 should not be moved or reused.
 
 The tag-trigger workflow must be present in the tagged commit. Branches created before
