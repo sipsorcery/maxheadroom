@@ -14,6 +14,7 @@
 //   NEURAL_MATTE     grayscale figure matte PNG       (default C:\tools\wav2lip\persona_alpha.png)
 //   NEURAL_FACE_BOX  y1,y2,x1,x2 face box at 640x480  (default = the bundled Max persona's)
 //   NEURAL_EYES      x,y,w,h[;x,y,w,h] blink eyes     (default = the Max persona's lit eye)
+//   BLINK_PERIOD_MS  base ms between blinks           (default 3300, clamped 800-20000)
 // The face box / eye rects are static per persona (the Python side detected them with
 // Haar cascades; here they are config - re-detect once when you swap the persona).
 //
@@ -282,8 +283,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         for (int i = 0; i < _eyes.Length; i++)
         {
             var (_, _, ew, eh) = _eyes[i];
-            int stripH = Math.Max(3, (int)(eh * 0.35));
-            _blinkStripBitmaps[i] = new SKBitmap(new SKImageInfo(ew, stripH, SKColorType.Bgra8888, SKAlphaType.Premul));
+            _blinkStripBitmaps[i] = new SKBitmap(new SKImageInfo(ew, BlinkStripHeight(eh), SKColorType.Bgra8888, SKAlphaType.Premul));
             _blinkStripCanvases[i] = new SKCanvas(_blinkStripBitmaps[i]);
         }
 
@@ -659,7 +659,16 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         fgCanvas.DrawBitmap(_scaledMouthBitmap, x1, y1, _srcPaint);
     }
 
-    /// <summary>Blink: stretch the lid skin just above each eye down over it (per the sidecar).</summary>
+    /// <summary>Height of the skin strip captured above each eye as lid texture. Half the eye
+    /// height: taller than the old 0.35 so the stretch over a full blink stays subtle, short
+    /// enough to (usually) stay below the brow.</summary>
+    private static int BlinkStripHeight(int eyeHeight) => Math.Max(3, (int)(eyeHeight * 0.5));
+
+    /// <summary>Blink: draw a shaped eyelid over each eye. The lid is the skin strip just above
+    /// the eye, clipped to a region whose leading edge is a downward-bulging arc (the lid
+    /// curvature), shaded darker toward that edge, with a soft lash line stroked along it once
+    /// the blink is past half-closed. Replaces the old hard-edged stretched rectangle that read
+    /// as a fold of flesh dropping over the eye.</summary>
     private void DrawBlink(SKCanvas fgCanvas, double amount)
     {
         for (int i = 0; i < _eyes.Length; i++)
@@ -670,11 +679,55 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             {
                 continue;
             }
-            int stripH = Math.Max(3, (int)(h * 0.35));
+
+            // The leading edge arcs below the lid's straight sides so a full blink follows the
+            // eye's curvature instead of leaving lit eye visible at the corners.
+            float arc = w * 0.18f;
+            float edge = y + cover;
+
+            int stripH = BlinkStripHeight(h);
             var src = SKRect.Create(x, y - stripH, w, stripH);
-            var dst = SKRect.Create(x, y, w, cover);
             _blinkStripCanvases[i].DrawBitmap(_persona, src, SKRect.Create(w, stripH));
-            fgCanvas.DrawBitmap(_blinkStripBitmaps[i], dst, _srcPaint);
+
+            using var lid = new SKPath();
+            lid.MoveTo(x, y);
+            lid.LineTo(x + w, y);
+            lid.LineTo(x + w, edge);
+            lid.QuadTo(x + w / 2f, edge + arc, x, edge);
+            lid.Close();
+
+            fgCanvas.Save();
+            fgCanvas.ClipPath(lid, antialias: true);
+            fgCanvas.DrawBitmap(_blinkStripBitmaps[i], SKRect.Create(x, y, w, cover + arc), _srcPaint);
+
+            // Shading: skin darkens toward the lash line (the upper lid is in slight shadow).
+            using var shadePaint = new SKPaint();
+            shadePaint.Shader = SKShader.CreateLinearGradient(
+                new SKPoint(x, y),
+                new SKPoint(x, edge + arc),
+                new[] { new SKColor(0, 0, 0, 0), new SKColor(20, 8, 8, 70) },
+                null, SKShaderTileMode.Clamp);
+            fgCanvas.DrawRect(SKRect.Create(x, y, w, cover + arc), shadePaint);
+            fgCanvas.Restore();
+
+            // Lash line along the curved leading edge, fading in over the second half of the
+            // close; a touch of blur keeps it soft rather than drawn-on.
+            if (amount > 0.5)
+            {
+                byte alpha = (byte)(180 * Math.Min(1.0, (amount - 0.5) / 0.4));
+                using var lashPath = new SKPath();
+                lashPath.MoveTo(x, edge);
+                lashPath.QuadTo(x + w / 2f, edge + arc, x + w, edge);
+                using var lashPaint = new SKPaint
+                {
+                    IsAntialias = true,
+                    Style = SKPaintStyle.Stroke,
+                    StrokeWidth = 2f,
+                    Color = new SKColor(24, 12, 12, alpha),
+                    MaskFilter = SKMaskFilter.CreateBlur(SKBlurStyle.Normal, 0.8f),
+                };
+                fgCanvas.DrawPath(lashPath, lashPaint);
+            }
         }
     }
 
@@ -709,14 +762,53 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         return SKMatrix.CreateTranslation((float)dx, (float)dy).PreConcat(m);
     }
 
-    /// <summary>0..1 lid closure; a ~200ms triangular blink at a pseudo-random point in each ~3.3s window.</summary>
+    // Blink timing. Base window between blinks is BLINK_PERIOD_MS (default 3.3s); inside each
+    // window the blink fires at a deterministic pseudo-random offset. The lid motion is
+    // asymmetric like a real blink - fast close, brief hold, slower release:
+    //   close 80ms (smoothstep in) -> hold 40ms -> open 160ms (smoothstep out).
+    // ~1 window in 8 fires a second blink ~350ms later (a "double blink").
+    private static readonly int _blinkPeriodMs = ReadIntEnv("BLINK_PERIOD_MS", 3300, 800, 20000);
+    private const double BlinkCloseSecs = 0.08;
+    private const double BlinkHoldSecs = 0.04;
+    private const double BlinkOpenSecs = 0.16;
+    private const double BlinkTotalSecs = BlinkCloseSecs + BlinkHoldSecs + BlinkOpenSecs;
+
+    private static int ReadIntEnv(string name, int fallback, int min, int max) =>
+        int.TryParse(Environment.GetEnvironmentVariable(name), out var v) && v >= min && v <= max ? v : fallback;
+
+    /// <summary>0..1 lid closure over time; smoothstep close/hold/open profile (see constants
+    /// above) at a pseudo-random point in each BLINK_PERIOD_MS window, with occasional doubles.</summary>
     private static double BlinkAmount(double t)
     {
-        const double period = 3.3;
+        double period = _blinkPeriodMs / 1000.0;
         int k = (int)(t / period);
-        double start = ((uint)(k * 40503) & 0xFFFF) % 100 / 100.0 * (period - 0.3);
-        double ph = t - k * period - start;
-        return ph >= 0 && ph < 0.20 ? 1.0 - Math.Abs(ph / 0.10 - 1.0) : 0.0;
+        uint hash = (uint)(k * 40503) & 0xFFFF;
+        double start = hash % 100 / 100.0 * (period - 1.0);
+        double a = BlinkProfile(t - k * period - start);
+        if ((hash >> 8) % 8 == 0)
+        {
+            a = Math.Max(a, BlinkProfile(t - k * period - start - BlinkTotalSecs - 0.07));
+        }
+        return a;
+    }
+
+    private static double BlinkProfile(double ph)
+    {
+        if (ph < 0 || ph >= BlinkTotalSecs)
+        {
+            return 0.0;
+        }
+        if (ph < BlinkCloseSecs)
+        {
+            double u = ph / BlinkCloseSecs;
+            return u * u * (3 - 2 * u);
+        }
+        if (ph < BlinkCloseSecs + BlinkHoldSecs)
+        {
+            return 1.0;
+        }
+        double v = (ph - BlinkCloseSecs - BlinkHoldSecs) / BlinkOpenSecs;
+        return 1.0 - v * v * (3 - 2 * v);
     }
 
     // --- Background (port of the sidecar's isometric room-corner louvres) -----------------
