@@ -85,28 +85,38 @@ jobs:
               "$IMAGE_REPOSITORY:$docker_tag"
               "$IMAGE_REPOSITORY:sha-$short_sha"
             )
+            primary_image="$IMAGE_REPOSITORY:$docker_tag"
+            promotion_target=""
 
             # Updating latest remains an explicit act: only a tag whose channel
-            # declares master or release is allowed to move it.
+            # declares master or release is allowed to move it or propose a
+            # production deployment.
             if [[ "$channel" == "master" || "$channel" == "release" ]]; then
               image_tags+=("$IMAGE_REPOSITORY:latest")
+              promotion_target="production"
             fi
           else
+            channel=""
             source_ref="$MANUAL_REF"
             display_ref="$MANUAL_REF"
             version="$short_sha"
             description="${MANUAL_DESCRIPTION//$'\r'/ }"
             description="${description//$'\n'/ }"
             image_tags=("$MANUAL_IMAGE")
+            primary_image="$MANUAL_IMAGE"
+            promotion_target=""
           fi
 
           {
             echo "full_sha=$full_sha"
             echo "short_sha=$short_sha"
+            echo "channel=$channel"
             echo "source_ref=$source_ref"
             echo "display_ref=$display_ref"
             echo "version=$version"
             echo "description=$description"
+            echo "primary_image=$primary_image"
+            echo "promotion_target=$promotion_target"
             echo "tags<<EOF"
             printf '%s\n' "${image_tags[@]}"
             echo "EOF"
@@ -137,12 +147,56 @@ jobs:
             GIT_SHA=${{ steps.settings.outputs.short_sha }}
             BUILD_DESCRIPTION=${{ steps.settings.outputs.description }}
 
+      - name: Propose production deployment
+        id: promotion
+        if: steps.settings.outputs.promotion_target == 'production'
+        shell: bash
+        env:
+          DOCONFIGSYNC_TOKEN: ${{ secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          IMAGE: ${{ steps.settings.outputs.primary_image }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          SOURCE_TAG: ${{ steps.settings.outputs.display_ref }}
+          SOURCE_SHA: ${{ steps.settings.outputs.full_sha }}
+          BUILD_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$DOCONFIGSYNC_TOKEN" ]]; then
+            echo "::warning::DOCONFIGSYNC_DISPATCH_TOKEN is not configured; deployment proposal skipped."
+            echo "status=skipped (missing DOCONFIGSYNC_DISPATCH_TOKEN)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          jq -n \
+            --arg image "$IMAGE" \
+            --arg digest "$IMAGE_DIGEST" \
+            --arg source_tag "$SOURCE_TAG" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg build_run_url "$BUILD_RUN_URL" \
+            '{
+              event_type: "max-production-image-ready",
+              client_payload: {
+                image: $image,
+                digest: $digest,
+                source_tag: $source_tag,
+                source_sha: $source_sha,
+                build_run_url: $build_run_url
+              }
+            }' |
+            GH_TOKEN="$DOCONFIGSYNC_TOKEN" gh api \
+              --method POST \
+              repos/sipsorcery/doconfigsync/dispatches \
+              --input -
+
+          echo "status=dispatched to sipsorcery/doconfigsync" >> "$GITHUB_OUTPUT"
+
       - name: Summary
         env:
           IMAGE_TAGS: ${{ steps.settings.outputs.tags }}
           SOURCE_REF: ${{ steps.settings.outputs.display_ref }}
           SHORT_SHA: ${{ steps.settings.outputs.short_sha }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+          PROMOTION_STATUS: ${{ steps.promotion.outputs.status }}
         run: |
           {
             echo "Built and pushed:"
@@ -153,4 +207,8 @@ jobs:
             echo "Source: \`$SOURCE_REF\` @ \`$SHORT_SHA\`"
             echo
             echo "Digest: \`$IMAGE_DIGEST\`"
+            if [[ -n "$PROMOTION_STATUS" ]]; then
+              echo
+              echo "Deployment proposal: $PROMOTION_STATUS"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

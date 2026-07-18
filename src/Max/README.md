@@ -264,6 +264,22 @@ this capability was added must merge or rebase the workflow change before their 
 can start automatic builds. The workflow's existing manual-dispatch mode remains
 available when a custom image reference or build description is needed.
 
+After a successful `master` or `release` channel build, the workflow sends the exact
+image tag and digest to the `sipsorcery/doconfigsync` repository. That repository
+validates the published digest and opens a production deployment PR; merging the PR
+remains the human approval that allows Flux to deploy it. Other channels are build-only.
+
+Cross-repository dispatch requires a fine-grained GitHub token limited to the
+`sipsorcery/doconfigsync` repository with **Contents: read and write** permission. Store
+it as the `DOCONFIGSYNC_DISPATCH_TOKEN` Actions secret in this repository:
+
+```powershell
+gh secret set DOCONFIGSYNC_DISPATCH_TOKEN --repo sipsorcery/maxheadroom
+```
+
+If the secret is absent, the image build still succeeds and its summary reports that
+the deployment proposal was skipped.
+
 The supplied Compose file maps the conventional `C:\tools` model tree into the
 container and configures all of the Linux model paths. From this directory:
 
