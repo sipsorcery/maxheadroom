@@ -8,6 +8,18 @@
 // 16-bit mono PCM + sample rate out). Implementations: SherpaTtsSpeaker (local,
 // in-process) and ElevenLabsTtsSpeaker (cloud).
 //
+// SpeakQueueAsync pipelines a multi-clause reply: it prefetches clause N+1's
+// synthesis while clause N is still playing, instead of the strictly serial
+// synthesise-then-play-then-synthesise-next-clause pattern SpeakAsync uses alone.
+// This was evaluated as sherpa-onnx's GenerateWithCallback (issue #13) first: that
+// API only invokes its callback once per *sentence* the model's own text splitter
+// produces (measured empirically - a single already-short clause, which is what
+// AskAsync's clause chunking already hands each SpeakAsync call, yields exactly one
+// callback at the very end, identical to the blocking Generate() call). VITS/Piper
+// is a non-autoregressive model, so there is no partial audio to stream *within* one
+// clause. The real remaining latency is *between* clauses in a multi-clause reply,
+// which prefetching removes.
+//
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
 //
@@ -16,6 +28,7 @@
 //-----------------------------------------------------------------------------
 
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
@@ -67,25 +80,147 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
         }
 
         await _speakLock.WaitAsync().ConfigureAwait(false);
-
         try
         {
-            logger.LogInformation("[{Engine}] Synthesising: \"{Text}\"", EngineName, text);
+            var (pcm, sampleRate) = await SynthesiseTimedAsync(text).ConfigureAwait(false);
+            await PlaySamplesAsync(pcm, sampleRate, text).ConfigureAwait(false);
+        }
+        finally
+        {
+            _speakLock.Release();
+        }
+    }
 
-            var synthClock = Stopwatch.StartNew();
-            var (pcm, sampleRate) = await SynthesiseAsync(text).ConfigureAwait(false);
-            BenchMetrics.Record("tts_synth", synthClock.Elapsed.TotalMilliseconds, $"chars={text.Length}");
-            if (pcm == null || pcm.Length == 0)
+    /// <summary>
+    /// Speaks a multi-clause reply, prefetching each clause's synthesis while the previous
+    /// clause is still playing (see the file header) - the LLM-side producer (<paramref
+    /// name="texts"/>, typically AskAsync's clause-chunked stream) can keep yielding while a
+    /// clause plays; this pulls at most one clause ahead. Only one utterance/queue is spoken
+    /// at a time (shares <see cref="SpeakAsync"/>'s lock).
+    /// </summary>
+    public async Task SpeakQueueAsync(IAsyncEnumerable<string> texts, Func<bool> shouldContinue = null)
+    {
+        if (texts == null)
+        {
+            return;
+        }
+
+        await _speakLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await using var enumerator = texts.GetAsyncEnumerator();
+            if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
             {
-                logger.LogError("[{Engine}] produced no audio for \"{Text}\".", EngineName, text);
                 return;
             }
 
-            var samples = sampleRate == TargetRate ? pcm : Resample(pcm, sampleRate, TargetRate);
+            string currentText = enumerator.Current;
+            (short[] samples, int sampleRate) current = await TrySynthesiseAsync(currentText).ConfigureAwait(false);
 
-            logger.LogInformation("[{Engine}] Synthesised {Samples} samples ({Ms} ms).",
-                EngineName, samples.Length, samples.Length * 1000 / TargetRate);
+            while (true)
+            {
+                if (shouldContinue != null && !shouldContinue())
+                {
+                    return;
+                }
 
+                // Begin waiting for and synthesising the next clause before playing this one.
+                // Crucially, do not await it yet: first-clause playback must not be delayed while
+                // the LLM is still producing clause two.
+                async Task<(bool hasNext, string text, short[] samples, int sampleRate)> PrepareNextAsync()
+                {
+                    if (!await enumerator.MoveNextAsync().ConfigureAwait(false))
+                    {
+                        return (false, null, null, 0);
+                    }
+
+                    string text = enumerator.Current;
+                    var synthesised = await TrySynthesiseAsync(text).ConfigureAwait(false);
+                    return (true, text, synthesised.samples, synthesised.sampleRate);
+                }
+                var nextTask = PrepareNextAsync();
+
+                try
+                {
+                    await PlaySamplesAsync(current.samples, current.sampleRate, currentText).ConfigureAwait(false);
+                }
+                catch (Exception excp)
+                {
+                    logger.LogError(excp, "Exception {Engine}.SpeakQueueAsync playing \"{Text}\".", EngineName, currentText);
+                }
+
+                // Any synthesis time not hidden behind playback is the audible inter-clause gap.
+                var clauseClock = Stopwatch.StartNew();
+                var next = await nextTask.ConfigureAwait(false);
+                if (!next.hasNext)
+                {
+                    break;
+                }
+                BenchMetrics.Record("tts_interclause_gap", clauseClock.Elapsed.TotalMilliseconds);
+
+                // Barge-in may have happened while the prefetched clause was synthesising.
+                // Never play that stale clause after the new turn has cancelled current audio.
+                if (shouldContinue != null && !shouldContinue())
+                {
+                    return;
+                }
+
+                currentText = next.text;
+                current = (next.samples, next.sampleRate);
+            }
+        }
+        finally
+        {
+            _speakLock.Release();
+        }
+    }
+
+    private async Task<(short[] samples, int sampleRate)> TrySynthesiseAsync(string text)
+    {
+        try
+        {
+            return await SynthesiseTimedAsync(text).ConfigureAwait(false);
+        }
+        catch (Exception excp)
+        {
+            logger.LogError(excp, "Exception {Engine}.SpeakQueueAsync synthesising \"{Text}\".", EngineName, text);
+            return (null, 0);
+        }
+    }
+
+    /// <summary>Synthesises one clause, recording the same tts_synth/tts_first_chunk bench
+    /// stages <see cref="SpeakAsync"/> always has, whether called from there or from the
+    /// prefetch loop in <see cref="SpeakQueueAsync"/>.</summary>
+    private async Task<(short[] samples, int sampleRate)> SynthesiseTimedAsync(string text)
+    {
+        logger.LogInformation("[{Engine}] Synthesising: \"{Text}\"", EngineName, text);
+        var synthClock = Stopwatch.StartNew();
+        var result = await SynthesiseAsync(text).ConfigureAwait(false);
+        BenchMetrics.Record("tts_synth", synthClock.Elapsed.TotalMilliseconds, $"chars={text.Length}");
+        // For blocking engines the first playable audio IS the completed synthesis;
+        // recorded under the same name the streaming engines use so the history
+        // table compares time-to-first-audio across engines directly.
+        BenchMetrics.Record("tts_first_chunk", synthClock.Elapsed.TotalMilliseconds);
+        return result;
+    }
+
+    /// <summary>Plays already-synthesised PCM through the avatar with amplitude-driven lip-sync.
+    /// Caller holds <see cref="_speakLock"/> for the duration.</summary>
+    private async Task PlaySamplesAsync(short[] pcm, int sampleRate, string textForLogging)
+    {
+        if (pcm == null || pcm.Length == 0)
+        {
+            logger.LogError("[{Engine}] produced no audio for \"{Text}\".", EngineName, textForLogging);
+            return;
+        }
+
+        var samples = sampleRate == TargetRate ? pcm : Resample(pcm, sampleRate, TargetRate);
+
+        logger.LogInformation("[{Engine}] Synthesised {Samples} samples ({Ms} ms).",
+            EngineName, samples.Length, samples.Length * 1000 / TargetRate);
+
+        try
+        {
             _renderer.BeginSpeech();
 
             int frameSamples = TargetRate * EnvelopeFrameMs / 1000;
@@ -132,14 +267,9 @@ public abstract class LipSyncTtsSpeaker : IAvatarSpeaker
 
             await mouthTask.ConfigureAwait(false);
         }
-        catch (Exception excp)
-        {
-            logger.LogError(excp, "Exception {Engine}.SpeakAsync.", EngineName);
-        }
         finally
         {
             _renderer.EndSpeech();
-            _speakLock.Release();
         }
     }
 

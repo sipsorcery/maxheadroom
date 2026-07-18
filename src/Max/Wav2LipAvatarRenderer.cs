@@ -169,6 +169,30 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private readonly byte[] _postByte;                  // scanline*vignette per pixel, 0..255.
     private readonly byte[] _biasPost;                  // grade bias * post, per pixel BGR.
     private readonly int[] _gradeM;                     // 3x3 colour matrix, Q8 fixed point.
+    // gradeM[0/1] folded with the per-pixel post mask ONCE at startup (post never changes -
+    // it's a static scanline*vignette pattern), so the per-frame hot loop in GradeToBgr does
+    // one shift instead of two and skips a redundant multiply-by-post per channel per pixel.
+    private readonly int[] _gradeM00Post;
+    private readonly int[] _gradeM01Post;
+
+    // Render scratch buffers, reused every tick instead of allocated fresh (RenderFrame and
+    // DrawMouth used to `new SKBitmap(...)` on every call - ~1.2MB+ for the full-size one
+    // alone, 25x/second). Every draw into these fully overwrites their pixels each frame (the
+    // background Clear, and Src-blend draws below, all cover 100% of the target), so reuse
+    // without clearing is safe. Single-threaded by construction: RenderTick's _renderBusy
+    // guard means only one tick is ever inside RenderFrame at a time.
+    // NOTE: the "fg" (persona+mouth+blink) bitmap/canvas is deliberately NOT in this pool -
+    // see the comment in RenderFrame.
+    private readonly SKBitmap _frameBitmap;
+    private readonly SKCanvas _frameCanvas;
+    private readonly SKBitmap _mouthBitmap;
+    private readonly SKBitmap _scaledMouthBitmap;
+    private readonly SKCanvas _scaledMouthCanvas;
+    private readonly SKPaint _defaultPaint = new();               // plain SrcOver, shared.
+    private readonly SKPaint _srcPaint = new() { BlendMode = SKBlendMode.Src };
+    // One strip bitmap/canvas per eye (blink lid skin) - w/stripH are fixed per persona.
+    private readonly SKBitmap[] _blinkStripBitmaps;
+    private readonly SKCanvas[] _blinkStripCanvases;
 
     // Audio -> mouth state (locked).
     private readonly object _audioLock = new();
@@ -230,6 +254,32 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         personaOpaque.Dispose();
 
         BuildGradeTables(_matteAlpha, out _postByte, out _biasPost, out _gradeM);
+
+        _gradeM00Post = new int[WIDTH * HEIGHT];
+        _gradeM01Post = new int[WIDTH * HEIGHT];
+        for (int p = 0; p < WIDTH * HEIGHT; p++)
+        {
+            _gradeM00Post[p] = _gradeM[0] * _postByte[p];
+            _gradeM01Post[p] = _gradeM[1] * _postByte[p];
+        }
+
+        // Render scratch buffers - allocated once here instead of per-tick (see the field
+        // comments above).
+        _frameBitmap = new SKBitmap(new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul));
+        _frameCanvas = new SKCanvas(_frameBitmap);
+        _mouthBitmap = new SKBitmap(new SKImageInfo(IMG_SIZE, IMG_SIZE, SKColorType.Bgra8888, SKAlphaType.Premul));
+        var (fby1, fby2, fbx1, fbx2) = _faceBox;
+        _scaledMouthBitmap = new SKBitmap(new SKImageInfo(fbx2 - fbx1, fby2 - fby1, SKColorType.Bgra8888, SKAlphaType.Premul));
+        _scaledMouthCanvas = new SKCanvas(_scaledMouthBitmap);
+        _blinkStripBitmaps = new SKBitmap[_eyes.Length];
+        _blinkStripCanvases = new SKCanvas[_eyes.Length];
+        for (int i = 0; i < _eyes.Length; i++)
+        {
+            var (_, _, ew, eh) = _eyes[i];
+            int stripH = Math.Max(3, (int)(eh * 0.35));
+            _blinkStripBitmaps[i] = new SKBitmap(new SKImageInfo(ew, stripH, SKColorType.Bgra8888, SKAlphaType.Premul));
+            _blinkStripCanvases[i] = new SKCanvas(_blinkStripBitmaps[i]);
+        }
 
         _renderTimer = new Timer(RenderTick, null, Timeout.Infinite, Timeout.Infinite);
     }
@@ -296,11 +346,14 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
 
     public Task PauseVideo() { _isPaused = true; return Task.CompletedTask; }
     public Task ResumeVideo() { _isPaused = false; return Task.CompletedTask; }
-    public Task CloseVideo()
+    public async Task CloseVideo()
     {
         _isClosed = true;
-        _renderTimer?.Change(Timeout.Infinite, Timeout.Infinite);
-        return Task.CompletedTask;
+        var timer = Interlocked.Exchange(ref _renderTimer, null);
+        if (timer != null)
+        {
+            await timer.DisposeAsync().ConfigureAwait(false);
+        }
     }
 
     // --- Render loop --------------------------------------------------------------------
@@ -324,12 +377,30 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
 
         try
         {
+            // Whole-tick cost (mouth inference + compose + encode). The budget at 25fps is
+            // 40ms; anything above means dropped ticks via the busy-guard and a laggy face.
+            // Only recorded while speaking - idle ticks are cheap and would swamp the buffer.
+            var tickClock = _speaking ? System.Diagnostics.Stopwatch.StartNew() : null;
+
+            // Three sub-stages of the tick, to find out which one is actually eating the
+            // budget rather than guessing: mouth inference (already separately timed as
+            // wav2lip_infer when a new frame is computed - this wraps the whole call,
+            // including the cheap "reuse last mouth" path), SkiaSharp compositing (matte
+            // blend, VHS grade, warp/blink - all per-pixel managed code, prime suspect),
+            // and the FFmpeg encode (openh264, tuned zerolatency - expected to be cheap).
+            var mouthClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var mouth = NextMouth();
+            if (mouthClock != null) { BenchMetrics.Record("render_mouth", mouthClock.Elapsed.TotalMilliseconds); }
+
+            var composeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var bgr = RenderFrame(mouth, _frameIdx);
+            if (composeClock != null) { BenchMetrics.Record("render_compose", composeClock.Elapsed.TotalMilliseconds); }
             _frameIdx++;
 
+            var encodeClock = tickClock != null ? System.Diagnostics.Stopwatch.StartNew() : null;
             var encoded = _videoEncoder.EncodeVideo(WIDTH, HEIGHT, bgr, VideoPixelFormatsEnum.Bgr,
                 _formatManager.SelectedFormat.Codec);
+            if (encodeClock != null) { BenchMetrics.Record("render_encode", encodeClock.Elapsed.TotalMilliseconds); }
             if (encoded != null)
             {
                 // Truthful RTP durations: a fixed 3600/frame lets the video RTP clock fall
@@ -342,6 +413,11 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
                     : (uint)Math.Clamp((now - _lastEmitMs) * (VIDEO_SAMPLING_RATE / 1000), 900, 4 * 3600);
                 _lastEmitMs = now;
                 OnVideoSourceEncodedSample?.Invoke(durationRtpTS, encoded);
+            }
+
+            if (tickClock != null)
+            {
+                BenchMetrics.Record("render_tick", tickClock.Elapsed.TotalMilliseconds);
             }
         }
         catch (Exception excp)
@@ -505,41 +581,44 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             _bgCacheIdx = idx;
         }
 
-        using var frame = new SKBitmap(new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Premul));
-        using (var canvas = new SKCanvas(frame))
-        using (var paint = new SKPaint())
+        // Reused scratch buffers (see the field comments) - every draw below covers each
+        // bitmap's full pixel area, so no explicit clear is needed before reuse.
+        _frameCanvas.DrawBitmap(_bgCache, SKRect.Create(WIDTH, HEIGHT), _defaultPaint);
+
+        // Figure layer: persona copy + live mouth + blink, drawn through zoom*pose so the
+        // matte alpha warps with it (one SrcOver draw = the whole blend).
+        // NOT pooled (unlike frame/mouth/scaledMouth below): reusing a persistent fg bitmap
+        // + canvas here produced a real, reproducible pixel corruption under the pose/zoom
+        // warp draw (bisected empirically - verified via --avatar-test pixel diffs against
+        // an unpooled baseline; every other pooled buffer here was cleared of suspicion the
+        // same way). Root cause not fully identified (suspect some Skia-level interaction
+        // between a persistently-reused destination canvas and a non-trivial transform draw
+        // repeated across many frames) - not worth chasing further given fg is one of the
+        // smaller buffers; frame/mouth/scaledMouth still get the bulk of the allocation win.
+        using var fg = new SKBitmap(_persona.Info);
+        _persona.CopyTo(fg);
+        using (var fgCanvas = new SKCanvas(fg))
         {
-            canvas.DrawBitmap(_bgCache, SKRect.Create(WIDTH, HEIGHT), paint);
-
-            // Figure layer: persona copy + live mouth + blink, drawn through zoom*pose so the
-            // matte alpha warps with it (one SrcOver draw = the whole blend).
-            using var fg = new SKBitmap(_persona.Info);
-            _persona.CopyTo(fg);
-            using (var fgCanvas = new SKCanvas(fg))
+            DrawMouth(fgCanvas, mouth96);
+            double blink = BlinkAmount(t);
+            if (blink > 0)
             {
-                DrawMouth(fgCanvas, mouth96);
-                double blink = BlinkAmount(t);
-                if (blink > 0)
-                {
-                    DrawBlink(fgCanvas, blink);
-                }
+                DrawBlink(fgCanvas, blink);
             }
-
-            canvas.SetMatrix(PoseMatrix(t).PreConcat(ZoomMatrix()));
-            canvas.DrawBitmap(fg, 0, 0, paint);
-            canvas.ResetMatrix();
         }
 
-        return GradeToBgr(frame);
+        _frameCanvas.SetMatrix(PoseMatrix(t).PreConcat(ZoomMatrix()));
+        _frameCanvas.DrawBitmap(fg, 0, 0, _defaultPaint);
+        _frameCanvas.ResetMatrix();
+
+        return GradeToBgr(_frameBitmap);
     }
 
     private void DrawMouth(SKCanvas fgCanvas, byte[] mouth96)
     {
-        var info = new SKImageInfo(IMG_SIZE, IMG_SIZE, SKColorType.Bgra8888, SKAlphaType.Premul);
-        using var mouthBmp = new SKBitmap(info);
         unsafe
         {
-            var dst = (byte*)mouthBmp.GetPixels().ToPointer();
+            var dst = (byte*)_mouthBitmap.GetPixels().ToPointer();
             for (int i = 0, o = 0; i < mouth96.Length; i += 3, o += 4)
             {
                 dst[o] = mouth96[i]; dst[o + 1] = mouth96[i + 1]; dst[o + 2] = mouth96[i + 2]; dst[o + 3] = 255;
@@ -551,14 +630,10 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         // pasting opaque there would punch a hard rectangle through the figure's alpha.
         var (y1, y2, x1, x2) = _faceBox;
         int bw = x2 - x1, bh = y2 - y1;
-        using var scaled = new SKBitmap(new SKImageInfo(bw, bh, SKColorType.Bgra8888, SKAlphaType.Premul));
-        using (var c = new SKCanvas(scaled))
-        {
-            c.DrawBitmap(mouthBmp, SKRect.Create(bw, bh), new SKPaint());
-        }
+        _scaledMouthCanvas.DrawBitmap(_mouthBitmap, SKRect.Create(bw, bh), _defaultPaint);
         unsafe
         {
-            var px = (byte*)scaled.GetPixels().ToPointer();
+            var px = (byte*)_scaledMouthBitmap.GetPixels().ToPointer();
             for (int yy = 0; yy < bh; yy++)
             {
                 int rowA = (y1 + yy) * WIDTH + x1;
@@ -575,16 +650,15 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             }
         }
 
-        using var paint = new SKPaint { BlendMode = SKBlendMode.Src };
-        fgCanvas.DrawBitmap(scaled, x1, y1, paint);
+        fgCanvas.DrawBitmap(_scaledMouthBitmap, x1, y1, _srcPaint);
     }
 
     /// <summary>Blink: stretch the lid skin just above each eye down over it (per the sidecar).</summary>
     private void DrawBlink(SKCanvas fgCanvas, double amount)
     {
-        using var paint = new SKPaint { BlendMode = SKBlendMode.Src };
-        foreach (var (x, y, w, h) in _eyes)
+        for (int i = 0; i < _eyes.Length; i++)
         {
+            var (x, y, w, h) = _eyes[i];
             int cover = (int)(h * amount);
             if (cover <= 2 || y - h < 0)
             {
@@ -593,12 +667,8 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             int stripH = Math.Max(3, (int)(h * 0.35));
             var src = SKRect.Create(x, y - stripH, w, stripH);
             var dst = SKRect.Create(x, y, w, cover);
-            using var strip = new SKBitmap(new SKImageInfo(w, stripH, SKColorType.Bgra8888, SKAlphaType.Premul));
-            using (var c = new SKCanvas(strip))
-            {
-                c.DrawBitmap(_persona, src, SKRect.Create(w, stripH));
-            }
-            fgCanvas.DrawBitmap(strip, dst, paint);
+            _blinkStripCanvases[i].DrawBitmap(_persona, src, SKRect.Create(w, stripH));
+            fgCanvas.DrawBitmap(_blinkStripBitmaps[i], dst, _srcPaint);
         }
     }
 
@@ -742,24 +812,39 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     /// post map) while converting the composited BGRA frame to the encoder's BGR24.</summary>
     private byte[] GradeToBgr(SKBitmap frame)
     {
-        var bgr = new byte[WIDTH * HEIGHT * 3];
-        ReadOnlySpan<byte> src;
-        unsafe { src = new ReadOnlySpan<byte>((byte*)frame.GetPixels().ToPointer(), WIDTH * HEIGHT * 4); }
+        // Diagnostic only while speaking (matches the render_mouth/compose/encode gating in
+        // RenderTick) - this is the render sprint's #19 investigation into where render_compose
+        // time goes: the whole 640x480 frame vs the small face-box draws in RenderFrame.
+        var gradeClock = _speaking ? System.Diagnostics.Stopwatch.StartNew() : null;
 
-        int m00 = _gradeM[0], m01 = _gradeM[1];
-        for (int p = 0, s = 0, d = 0; p < WIDTH * HEIGHT; p++, s += 4, d += 3)
+        var bgr = new byte[WIDTH * HEIGHT * 3];
+        unsafe
         {
-            int b = src[s], g = src[s + 1], r = src[s + 2];
-            // Desat+dim matrix: diag m00, off-diag m01 (symmetric across channels).
-            int b2 = (m00 * b + m01 * (g + r)) >> 8;
-            int g2 = (m00 * g + m01 * (b + r)) >> 8;
-            int r2 = (m00 * r + m01 * (b + g)) >> 8;
-            int post = _postByte[p];
-            int bp = p * 3;
-            bgr[d + 0] = (byte)Math.Min(255, ((b2 * post) >> 8) + _biasPost[bp + 0]);
-            bgr[d + 1] = (byte)Math.Min(255, ((g2 * post) >> 8) + _biasPost[bp + 1]);
-            bgr[d + 2] = (byte)Math.Min(255, ((r2 * post) >> 8) + _biasPost[bp + 2]);
+            byte* src = (byte*)frame.GetPixels().ToPointer();
+            fixed (byte* biasPost = _biasPost)
+            fixed (byte* dstBase = bgr)
+            fixed (int* m00Post = _gradeM00Post)
+            fixed (int* m01Post = _gradeM01Post)
+            {
+                byte* dst = dstBase;
+                for (int p = 0, s = 0, d = 0; p < WIDTH * HEIGHT; p++, s += 4, d += 3)
+                {
+                    int b = src[s], g = src[s + 1], r = src[s + 2];
+                    // Desat+dim matrix folded with the per-pixel post mask (see the
+                    // constructor): one shift instead of two, one multiply saved per channel.
+                    int m00 = m00Post[p], m01 = m01Post[p];
+                    int b2 = (m00 * b + m01 * (g + r)) >> 16;
+                    int g2 = (m00 * g + m01 * (b + r)) >> 16;
+                    int r2 = (m00 * r + m01 * (b + g)) >> 16;
+                    int bp = p * 3;
+                    dst[d + 0] = (byte)Math.Min(255, b2 + biasPost[bp + 0]);
+                    dst[d + 1] = (byte)Math.Min(255, g2 + biasPost[bp + 1]);
+                    dst[d + 2] = (byte)Math.Min(255, r2 + biasPost[bp + 2]);
+                }
+            }
         }
+
+        if (gradeClock != null) { BenchMetrics.Record("render_grade", gradeClock.Elapsed.TotalMilliseconds); }
         return bgr;
     }
 
@@ -1004,10 +1089,32 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     public void Dispose()
     {
         _isClosed = true;
-        _renderTimer?.Dispose();
+        // DisposeAsync waits for an in-flight render callback before the native encoder and
+        // Skia resources are released. Disposing them underneath FFmpeg caused exit code 139
+        // when short-lived benchmark peers disconnected in succession.
+        var timer = Interlocked.Exchange(ref _renderTimer, null);
+        timer?.DisposeAsync().AsTask().GetAwaiter().GetResult();
         // _session is shared for the app's lifetime (renderers are per-connection).
         _persona?.Dispose();
         _bgCache?.Dispose();
         _videoEncoder?.Dispose();
+
+        // Render scratch buffers - now pooled for the renderer's lifetime instead of
+        // allocated per tick, so they need disposing here instead of via `using`.
+        _frameCanvas?.Dispose();
+        _frameBitmap?.Dispose();
+        _mouthBitmap?.Dispose();
+        _scaledMouthCanvas?.Dispose();
+        _scaledMouthBitmap?.Dispose();
+        _defaultPaint?.Dispose();
+        _srcPaint?.Dispose();
+        if (_blinkStripCanvases != null)
+        {
+            foreach (var c in _blinkStripCanvases) { c?.Dispose(); }
+        }
+        if (_blinkStripBitmaps != null)
+        {
+            foreach (var b in _blinkStripBitmaps) { b?.Dispose(); }
+        }
     }
 }

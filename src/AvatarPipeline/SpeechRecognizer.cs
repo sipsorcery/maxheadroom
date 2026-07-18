@@ -152,7 +152,13 @@ public abstract class SpeechRecognizer : ISpeechRecognizer
                 string text;
                 try
                 {
+                    // Engine transcription cost per utterance. NOTE: the user-perceived
+                    // delay additionally includes the fixed ~0.6s VAD trailing-silence
+                    // window (TrailingSilenceSamples) that ends the utterance.
+                    var sttClock = System.Diagnostics.Stopwatch.StartNew();
                     text = Clean(await TranscribeAsync(pcm8k).ConfigureAwait(false));
+                    BenchMetrics.Record("stt_latency", sttClock.Elapsed.TotalMilliseconds,
+                        $"audioMs={pcm8k.Length * 1000 / SampleRate}");
                 }
                 catch (Exception excp)
                 {
