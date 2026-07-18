@@ -15,6 +15,7 @@
   <ItemGroup>
     <PackageReference Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageReference Include="SIPSorcery" Version="10.0.12" />
+    <PackageReference Include="Concentus" Version="2.2.2" />
     <PackageReference Include="SIPSorceryMedia.FFmpeg" Version="10.0.12" />
     <PackageReference Include="SkiaSharp" Version="4.150.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
