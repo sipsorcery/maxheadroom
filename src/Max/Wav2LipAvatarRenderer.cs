@@ -14,6 +14,7 @@
 //   NEURAL_MATTE     grayscale figure matte PNG       (default C:\tools\wav2lip\persona_alpha.png)
 //   NEURAL_FACE_BOX  y1,y2,x1,x2 face box at 640x480  (default = the bundled Max persona's)
 //   NEURAL_EYES      x,y,w,h[;x,y,w,h] blink eyes     (default = the Max persona's lit eye)
+//   NEURAL_BLINK_MODE keyframe|legacy (default = keyframe)
 // The face box / eye rects are static per persona (the Python side detected them with
 // Haar cascades; here they are config - re-detect once when you swap the persona).
 //
@@ -60,6 +61,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private const float ZOOM = 1.25f;              // figure fills the frame (per reference).
     private const int ZOOM_TOP = 70;               // top crop offset in zoomed px.
     private const int BG_EVERY = 3;                // re-render the slow background every Nth tick.
+    private const int BLINK_KEYFRAME_COUNT = 5;
 
     public static readonly List<VideoFormat> SupportedFormats = new()
     {
@@ -172,6 +174,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     private readonly float[] _matteAlpha;               // repaired matte, per pixel 0..1.
     private readonly (int y1, int y2, int x1, int x2) _faceBox;
     private readonly (int x, int y, int w, int h)[] _eyes;
+    private readonly string _blinkMode;
     private readonly byte[] _postByte;                  // scanline*vignette per pixel, 0..255.
     private readonly byte[] _biasPost;                  // grade bias * post, per pixel BGR.
     private readonly int[] _gradeM;                     // 3x3 colour matrix, Q8 fixed point.
@@ -199,6 +202,9 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
     // One strip bitmap/canvas per eye (blink lid skin) - w/stripH are fixed per persona.
     private readonly SKBitmap[] _blinkStripBitmaps;
     private readonly SKCanvas[] _blinkStripCanvases;
+    private readonly SKBitmap[][] _blinkKeyframes;
+    private readonly SKRect[] _blinkKeyframeRects;
+    private readonly SKPaint _blinkCompositePaint = new() { BlendMode = SKBlendMode.SrcOver, Color = SKColors.White };
 
     // Audio -> mouth state (locked).
     private readonly object _audioLock = new();
@@ -239,6 +245,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         mattePath ??= Environment.GetEnvironmentVariable("NEURAL_MATTE") ?? @"C:\tools\wav2lip\persona_alpha.png";
         _faceBox = ParseBox(Environment.GetEnvironmentVariable("NEURAL_FACE_BOX")) ?? (140, 406, 223, 479);
         _eyes = ParseEyes(Environment.GetEnvironmentVariable("NEURAL_EYES")) ?? new[] { (275, 213, 62, 62) };
+        _blinkMode = (Environment.GetEnvironmentVariable("NEURAL_BLINK_MODE") ?? "keyframe").Trim().ToLowerInvariant();
 
         _session = GetSharedSession(modelPath);
 
@@ -258,6 +265,18 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         _matteAlpha = LoadRepairedMatte(mattePath);
         _persona = ApplyMatte(personaOpaque, _matteAlpha);
         personaOpaque.Dispose();
+
+        if (_blinkMode == "keyframe")
+        {
+            _blinkKeyframes = BuildBlinkKeyframes(_persona, _eyes, out _blinkKeyframeRects);
+            logger.LogInformation("Using curved keyframe blink rendering for {EyeCount} eye(s).", _eyes.Length);
+        }
+        else
+        {
+            _blinkKeyframes = null;
+            _blinkKeyframeRects = null;
+            logger.LogInformation("Using legacy blink rendering.");
+        }
 
         BuildGradeTables(_matteAlpha, out _postByte, out _biasPost, out _gradeM);
 
@@ -576,7 +595,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
 
     /// <summary>Composites one full frame: mouth+blink on the matted persona, warped by the
     /// liveness pose over the animated background, then the VHS grade. Returns BGR24.</summary>
-    private byte[] RenderFrame(byte[] mouth96, int idx)
+    private byte[] RenderFrame(byte[] mouth96, int idx, double? blinkOverride = null)
     {
         double t = idx / (double)FPS;
 
@@ -606,7 +625,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         using (var fgCanvas = new SKCanvas(fg))
         {
             DrawMouth(fgCanvas, mouth96);
-            double blink = BlinkAmount(t);
+            double blink = blinkOverride ?? BlinkAmount(t);
             if (blink > 0)
             {
                 DrawBlink(fgCanvas, blink);
@@ -659,8 +678,42 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         fgCanvas.DrawBitmap(_scaledMouthBitmap, x1, y1, _srcPaint);
     }
 
-    /// <summary>Blink: stretch the lid skin just above each eye down over it (per the sidecar).</summary>
+    /// <summary>Composites the precomputed curved-lid keyframes.</summary>
     private void DrawBlink(SKCanvas fgCanvas, double amount)
+    {
+        if (_blinkKeyframes != null)
+        {
+            DrawBlinkKeyframes(fgCanvas, amount);
+        }
+        else
+        {
+            DrawBlinkLegacy(fgCanvas, amount);
+        }
+    }
+
+    private void DrawBlinkKeyframes(SKCanvas fgCanvas, double amount)
+    {
+        double position = Math.Clamp(amount, 0, 1) * (BLINK_KEYFRAME_COUNT - 1);
+        int lower = Math.Min((int)position, BLINK_KEYFRAME_COUNT - 1);
+        int upper = Math.Min(lower + 1, BLINK_KEYFRAME_COUNT - 1);
+        byte upperAlpha = (byte)Math.Clamp((position - lower) * 255.0, 0.0, 255.0);
+
+        for (int i = 0; i < _blinkKeyframes.Length; i++)
+        {
+            var rect = _blinkKeyframeRects[i];
+            _blinkCompositePaint.Color = SKColors.White;
+            fgCanvas.DrawBitmap(_blinkKeyframes[i][lower], rect, _blinkCompositePaint);
+            if (upper != lower && upperAlpha > 0)
+            {
+                _blinkCompositePaint.Color = new SKColor(255, 255, 255, upperAlpha);
+                fgCanvas.DrawBitmap(_blinkKeyframes[i][upper], rect, _blinkCompositePaint);
+            }
+        }
+        _blinkCompositePaint.Color = SKColors.White;
+    }
+
+    /// <summary>Legacy fallback: stretch the lid skin just above each eye down over it.</summary>
+    private void DrawBlinkLegacy(SKCanvas fgCanvas, double amount)
     {
         for (int i = 0; i < _eyes.Length; i++)
         {
@@ -676,6 +729,125 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             _blinkStripCanvases[i].DrawBitmap(_persona, src, SKRect.Create(w, stripH));
             fgCanvas.DrawBitmap(_blinkStripBitmaps[i], dst, _srcPaint);
         }
+    }
+
+    private static SKBitmap[][] BuildBlinkKeyframes(
+        SKBitmap persona,
+        (int x, int y, int w, int h)[] eyes,
+        out SKRect[] destinationRects)
+    {
+        destinationRects = new SKRect[eyes.Length];
+        var keyframes = new SKBitmap[eyes.Length][];
+        double[] amounts = { 0.0, 0.25, 0.5, 0.75, 1.0 };
+
+        for (int i = 0; i < eyes.Length; i++)
+        {
+            var (x, y, w, h) = eyes[i];
+            int pad = Math.Max(7, (int)Math.Round(h * 0.12));
+            int left = Math.Max(0, x - pad);
+            int top = Math.Max(0, y - pad);
+            int right = Math.Min(WIDTH, x + w + pad);
+            int bottom = Math.Min(HEIGHT, y + h + pad);
+            var source = SKRect.Create(left, top, right - left, bottom - top);
+            destinationRects[i] = source;
+            keyframes[i] = new SKBitmap[BLINK_KEYFRAME_COUNT];
+
+            for (int frame = 0; frame < amounts.Length; frame++)
+            {
+                keyframes[i][frame] = BuildBlinkKeyframe(persona, source, x - left, y - top, w, h, amounts[frame]);
+            }
+        }
+        return keyframes;
+    }
+
+    private static SKBitmap BuildBlinkKeyframe(
+        SKBitmap persona,
+        SKRect source,
+        int eyeX,
+        int eyeY,
+        int eyeW,
+        int eyeH,
+        double amount)
+    {
+        var bitmap = new SKBitmap(new SKImageInfo((int)source.Width, (int)source.Height,
+            SKColorType.Bgra8888, SKAlphaType.Premul));
+        using var canvas = new SKCanvas(bitmap);
+        canvas.DrawBitmap(persona, source, SKRect.Create(bitmap.Width, bitmap.Height), new SKPaint());
+        if (amount <= 0)
+        {
+            return bitmap;
+        }
+
+        float cover = eyeH * (float)amount;
+        var topColour = AverageColour(persona,
+            (int)source.Left + eyeX, Math.Max(0, (int)source.Top + eyeY - Math.Max(4, eyeH / 2)),
+            (int)source.Left + eyeX + eyeW, (int)source.Top + eyeY);
+        var bottomColour = AverageColour(persona,
+            (int)source.Left + eyeX, Math.Min(HEIGHT - 1, (int)source.Top + eyeY + eyeH),
+            (int)source.Left + eyeX + eyeW, Math.Min(HEIGHT, (int)source.Top + eyeY + eyeH + Math.Max(4, eyeH / 3)));
+
+        using var shader = SKShader.CreateLinearGradient(
+            new SKPoint(0, eyeY),
+            new SKPoint(0, eyeY + eyeH),
+            new[] { topColour, bottomColour },
+            SKShaderTileMode.Clamp);
+        using var lidPaint = new SKPaint
+        {
+            IsAntialias = true,
+            Shader = shader,
+            BlendMode = SKBlendMode.SrcOver
+        };
+
+        using var lidPath = new SKPath();
+        float left = eyeX;
+        float right = eyeX + eyeW;
+        float edge = eyeY + cover;
+        float curve = Math.Min(eyeH * 0.12f, cover * 0.22f);
+        lidPath.MoveTo(left, eyeY);
+        lidPath.LineTo(right, eyeY);
+        lidPath.CubicTo(right - eyeW * 0.28f, edge - curve, left + eyeW * 0.28f, edge - curve, left, edge);
+        lidPath.Close();
+        canvas.DrawPath(lidPath, lidPaint);
+
+        if (amount >= 0.25)
+        {
+            float crease = amount >= 0.85 ? eyeY + eyeH * 0.58f : edge;
+            using var creasePath = new SKPath();
+            creasePath.MoveTo(left + eyeW * 0.08f, crease);
+            creasePath.CubicTo(left + eyeW * 0.32f, crease - eyeH * 0.06f,
+                left + eyeW * 0.68f, crease - eyeH * 0.06f, right - eyeW * 0.08f, crease);
+            using var creasePaint = new SKPaint
+            {
+                IsAntialias = true,
+                Color = new SKColor(70, 44, 37, (byte)(75 + amount * 55)),
+                Style = SKPaintStyle.Stroke,
+                StrokeWidth = Math.Max(0.8f, eyeH / 42f),
+                StrokeCap = SKStrokeCap.Round
+            };
+            canvas.DrawPath(creasePath, creasePaint);
+        }
+        return bitmap;
+    }
+
+    private static SKColor AverageColour(SKBitmap bitmap, int x1, int y1, int x2, int y2)
+    {
+        x1 = Math.Clamp(x1, 0, bitmap.Width - 1);
+        y1 = Math.Clamp(y1, 0, bitmap.Height - 1);
+        x2 = Math.Clamp(x2, x1 + 1, bitmap.Width);
+        y2 = Math.Clamp(y2, y1 + 1, bitmap.Height);
+        long r = 0, g = 0, b = 0, count = 0;
+        for (int y = y1; y < y2; y++)
+        {
+            for (int x = x1; x < x2; x++)
+            {
+                var colour = bitmap.GetPixel(x, y);
+                if (colour.Alpha < 16) continue;
+                r += colour.Red; g += colour.Green; b += colour.Blue; count++;
+            }
+        }
+        return count == 0
+            ? new SKColor(150, 100, 85)
+            : new SKColor((byte)(r / count), (byte)(g / count), (byte)(b / count));
     }
 
     private static SKMatrix ZoomMatrix()
@@ -1092,6 +1264,35 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         EndSpeech();
     }
 
+    /// <summary>Renders a deterministic open-to-closed blink sequence for visual review.</summary>
+    public void TestRenderBlinkFrames(string outDir)
+    {
+        Directory.CreateDirectory(outDir);
+        double[] amounts = { 0.0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25, 0.0 };
+        for (int i = 0; i < amounts.Length; i++)
+        {
+            SaveBgrFrame(RenderFrame(_idleMouth, i, amounts[i]),
+                Path.Combine(outDir, $"blink_{i:D2}_{amounts[i]:0.00}.png"));
+        }
+    }
+
+    private static void SaveBgrFrame(byte[] bgr, string path)
+    {
+        using var bmp = new SKBitmap(new SKImageInfo(WIDTH, HEIGHT, SKColorType.Bgra8888, SKAlphaType.Opaque));
+        unsafe
+        {
+            var dst = (byte*)bmp.GetPixels().ToPointer();
+            for (int p = 0, s = 0, d = 0; p < WIDTH * HEIGHT; p++, s += 3, d += 4)
+            {
+                dst[d] = bgr[s]; dst[d + 1] = bgr[s + 1]; dst[d + 2] = bgr[s + 2]; dst[d + 3] = 255;
+            }
+        }
+        using var img = SKImage.FromBitmap(bmp);
+        using var data = img.Encode(SKEncodedImageFormat.Png, 90);
+        using var fs = File.OpenWrite(path);
+        data.SaveTo(fs);
+    }
+
     public void Dispose()
     {
         _isClosed = true;
@@ -1114,6 +1315,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         _scaledMouthBitmap?.Dispose();
         _defaultPaint?.Dispose();
         _srcPaint?.Dispose();
+        _blinkCompositePaint?.Dispose();
         if (_blinkStripCanvases != null)
         {
             foreach (var c in _blinkStripCanvases) { c?.Dispose(); }
@@ -1121,6 +1323,13 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         if (_blinkStripBitmaps != null)
         {
             foreach (var b in _blinkStripBitmaps) { b?.Dispose(); }
+        }
+        if (_blinkKeyframes != null)
+        {
+            foreach (var eyeFrames in _blinkKeyframes)
+            {
+                foreach (var frame in eyeFrames) { frame?.Dispose(); }
+            }
         }
     }
 }

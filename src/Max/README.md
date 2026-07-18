@@ -116,9 +116,17 @@ Invoke-WebRequest -Uri "https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-G
   `NEURAL_EYES=x,y,w,h` (coordinates at 640x480 — eyeball them in any image editor). The
   baked defaults match the bundled Max persona.
 
+Blink rendering defaults to the curved keyframe compositor. Set
+`NEURAL_BLINK_MODE=legacy` to compare the previous stretched-skin implementation.
+The deterministic visual check writes an open-to-closed sequence without WebRTC:
+
+```powershell
+dotnet run -- --avatar-blink-test C:\temp\max-blink
+```
+
 Sanity-check each engine without a browser: `dotnet run -- --tts-test "hi"`,
 `-- --stt-test "hi"` (a TTS→STT round trip), `-- --llm-test "hi"`,
-`-- --avatar-test <raw-pcm> <out-dir>`.
+`-- --avatar-test <raw-pcm> <out-dir>`, or `-- --avatar-blink-test <out-dir>`.
 
 | Engine | Conventional path (auto-detected) | Override |
 |---|---|---|

@@ -204,6 +204,17 @@ class Program
                 sw.ElapsedMilliseconds, sw.ElapsedMilliseconds / 50.0, argv[avatarTestIdx + 2]);
             return;
         }
+
+        // Render a deterministic open-to-closed blink sequence to PNGs:
+        //   --avatar-blink-test <out-dir>
+        int avatarBlinkTestIdx = Array.IndexOf(argv, "--avatar-blink-test");
+        if (avatarBlinkTestIdx >= 0 && avatarBlinkTestIdx + 1 < argv.Length)
+        {
+            using var renderer = new Wav2LipAvatarRenderer(encoder: null);
+            renderer.TestRenderBlinkFrames(argv[avatarBlinkTestIdx + 1]);
+            _logger.LogInformation("Rendered deterministic blink frames to {Dir}.", argv[avatarBlinkTestIdx + 1]);
+            return;
+        }
         int ttsTestIdx = Array.IndexOf(argv, "--tts-test");
         if (ttsTestIdx >= 0)
         {
