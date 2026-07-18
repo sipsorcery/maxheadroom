@@ -1063,7 +1063,7 @@ class Program
                 ? _openAiRealtimeSilenceMs
                 : SpeechRecognizer.ActiveTrailingSilenceMilliseconds,
             pipeline = OpenAiRealtimeConfigured() ? "openai-realtime-s2s-websocket" : "llm-stt-tts",
-            audioFormat = OpenAiRealtimeConfigured() ? "pcmu" : null,
+            audioFormat = OpenAiRealtimeConfigured() ? "pcmu-in/pcm24-out" : null,
             avatarRenderer = rendererKind,
         };
         static string DirName(string path) => string.IsNullOrWhiteSpace(path) ? null : Path.GetFileName(path.TrimEnd('\\', '/'));

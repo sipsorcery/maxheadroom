@@ -2,8 +2,9 @@
 // Filename: OpenAiRealtimeSession.cs
 //
 // Description: A persistent server-to-server OpenAI Realtime WebSocket session.
-// Browser microphone PCMU is forwarded directly to the Realtime API; returned PCMU
-// is decoded once, then drives both WebRTC playback and the avatar mouth.
+// Browser microphone PCMU is forwarded directly to the Realtime API. Returned 24kHz
+// PCM is resampled to 16kHz and fed ahead to self-paced renderers while a separate
+// consumer paces WebRTC playback.
 //-----------------------------------------------------------------------------
 
 #nullable enable
@@ -18,6 +19,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using Concentus;
 using demo.Performance;
 using Microsoft.Extensions.Logging;
 using SIPSorcery.Media;
@@ -28,7 +30,6 @@ namespace demo;
 public sealed class OpenAiRealtimeSession : IAsyncDisposable
 {
     private static readonly ILogger logger = SIPSorcery.LogFactory.CreateLogger<OpenAiRealtimeSession>();
-    private static readonly AudioFormat PcmuFormat = new(SDPWellKnownMediaFormatsEnum.PCMU);
 
     private readonly string _apiKey;
     private readonly string _model;
@@ -39,7 +40,6 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
     private readonly AudioExtrasSource _audio;
     private readonly Func<BenchmarkTimeline?> _timelineProvider;
     private readonly ClientWebSocket _socket = new();
-    private readonly AudioEncoder _decoder = new();
     private readonly CancellationTokenSource _stop = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1);
     private readonly SemaphoreSlim _askLock = new(1, 1);
@@ -131,7 +131,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                     },
                     output = new
                     {
-                        format = new { type = "audio/pcmu" },
+                        format = new { type = "audio/pcm", rate = 24000 },
                         voice = _voice,
                     },
                 },
@@ -140,7 +140,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
 
         await _ready.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken).ConfigureAwait(false);
         logger.LogInformation(
-            "OpenAI Realtime session ready: model {Model}, voice {Voice}, input/output PCMU, VAD silence {SilenceMs}ms.",
+            "OpenAI Realtime session ready: model {Model}, voice {Voice}, PCMU input, PCM24 output, VAD silence {SilenceMs}ms.",
             _model, _voice, _silenceDurationMs);
     }
 
@@ -310,7 +310,23 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 if (state != null && !string.IsNullOrEmpty(delta))
                 {
                     state.Timeline?.RecordOnce(BenchmarkEventNames.TtsAudioReady);
-                    _outputAudio.Writer.TryWrite(new OutputAudio(id, Convert.FromBase64String(delta), false));
+                    var pcm16 = ResampleOutputAudio(Convert.FromBase64String(delta), state);
+                    if (pcm16.Length > 0)
+                    {
+                        // Wav2Lip owns its own speech clock and benefits from seeing audio as
+                        // soon as it arrives. Do not hold its lookahead behind real-time playback:
+                        // Realtime deltas are much smaller than ElevenLabs' streaming chunks.
+                        if (_renderer.PacesAudioInternally)
+                        {
+                            if (!state.MouthStarted)
+                            {
+                                _renderer.BeginSpeech();
+                                state.MouthStarted = true;
+                            }
+                            _renderer.PushAudio(pcm16, 16000);
+                        }
+                        _outputAudio.Writer.TryWrite(new OutputAudio(id, pcm16, false));
+                    }
                 }
                 break;
             }
@@ -319,7 +335,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
             case "response.audio.done":
             {
                 var id = GetResponseId(root);
-                _outputAudio.Writer.TryWrite(new OutputAudio(id, Array.Empty<byte>(), true));
+                _outputAudio.Writer.TryWrite(new OutputAudio(id, Array.Empty<short>(), true));
                 break;
             }
 
@@ -358,9 +374,13 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
 
             if (item.Done)
             {
-                if (speakingResponse == item.ResponseId)
+                if (state.MouthStarted)
                 {
                     _renderer.EndSpeech();
+                    state.MouthStarted = false;
+                }
+                if (speakingResponse == item.ResponseId)
+                {
                     speakingResponse = null;
                 }
                 state.AudioDone = true;
@@ -371,35 +391,57 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
 
             if (speakingResponse != item.ResponseId)
             {
-                if (speakingResponse != null)
+                if (speakingResponse != null && !_renderer.PacesAudioInternally)
                 {
                     _renderer.EndSpeech();
                 }
-                _renderer.BeginSpeech();
+                if (!_renderer.PacesAudioInternally)
+                {
+                    _renderer.BeginSpeech();
+                    state.MouthStarted = true;
+                }
                 speakingResponse = item.ResponseId;
             }
 
-            var pcm8k = _decoder.DecodeAudio(item.Pcmu, PcmuFormat);
-            if (pcm8k.Length == 0)
+            if (item.Pcm16.Length == 0)
             {
                 continue;
             }
 
-            // AudioExtrasSource accepts 16k PCM. Duplicate each 8k sample; this is deliberately
-            // simple because the Realtime API remains PCMU end-to-end and Wav2Lip only needs the
-            // same waveform timing for its mouth features.
-            var pcm16k = new short[pcm8k.Length * 2];
-            for (var i = 0; i < pcm8k.Length; i++)
+            if (!_renderer.PacesAudioInternally)
             {
-                pcm16k[i * 2] = pcm8k[i];
-                pcm16k[i * 2 + 1] = pcm8k[i];
+                _renderer.PushAudio(item.Pcm16, 16000);
             }
 
-            _renderer.PushAudio(pcm16k, 16000);
             state.Timeline?.RecordOnce(BenchmarkEventNames.AudioStarted);
-            await _audio.SendAudioFromStream(ToStream(pcm16k), AudioSamplingRatesEnum.Rate16KHz)
+            await _audio.SendAudioFromStream(ToStream(item.Pcm16), AudioSamplingRatesEnum.Rate16KHz)
                 .ConfigureAwait(false);
         }
+    }
+
+    private static short[] ResampleOutputAudio(byte[] pcm24Bytes, ResponseState state)
+    {
+        if (pcm24Bytes.Length < sizeof(short))
+        {
+            return Array.Empty<short>();
+        }
+
+        // Realtime PCM is signed 16-bit mono little-endian at 24kHz. Speex keeps its filter
+        // history across deltas, avoiding the discontinuities produced by resampling every
+        // small WebSocket message independently.
+        var pcm24 = new short[pcm24Bytes.Length / sizeof(short)];
+        Buffer.BlockCopy(pcm24Bytes, 0, pcm24, 0, pcm24.Length * sizeof(short));
+        var pcm16 = new short[pcm24.Length + 256];
+        var inputLength = pcm24.Length;
+        var outputLength = pcm16.Length;
+        state.Resampler.Process(0, pcm24, ref inputLength, pcm16, ref outputLength);
+
+        if (outputLength == pcm16.Length)
+        {
+            return pcm16;
+        }
+        Array.Resize(ref pcm16, outputLength);
+        return pcm16;
     }
 
     private void CompleteIfFinished(string responseId, ResponseState state)
@@ -516,11 +558,14 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
     {
         public BenchmarkTimeline? Timeline { get; } = timeline;
         public TaskCompletionSource<string>? Completion { get; } = completion;
+        public IResampler Resampler { get; } =
+            ResamplerFactory.CreateResampler(1, 24000, 16000, 5, TextWriter.Null);
         public StringBuilder Transcript { get; } = new();
         public bool FirstSentence { get; set; }
         public bool ResponseDone { get; set; }
         public bool AudioDone { get; set; }
+        public bool MouthStarted { get; set; }
     }
 
-    private sealed record OutputAudio(string ResponseId, byte[] Pcmu, bool Done);
+    private sealed record OutputAudio(string ResponseId, short[] Pcm16, bool Done);
 }
