@@ -56,7 +56,7 @@ deployment is `dotnet publish` plus model files on disk — no Python, no venvs,
 | `LocalLlmClient.cs` | OpenAI-compatible HTTP chat client (Ollama / LM Studio / hosted gateway) for generating in-character replies. |
 | `CodeAgentClient.cs` | Server-side client for the cluster-internal Codex controller. It registers the Max repository, starts tasks, polls status, and sends follow-up feedback without exposing the controller bearer token to the browser. |
 | `Program.cs` | ASP.NET host: `/offer` (send/recv WebRTC), `/say`, `/ask`, and the authenticated `/code-agent/*` proxy. Routes both the Ask box and recognised speech through one shared `AskAsync`. |
-| `wwwroot/index.html` | Browser client: connect (captures the mic), a mic mute toggle, Say / Ask controls, speech activity, and the collapsible coding-agent chat. |
+| `wwwroot/index.html` | Browser client: connect (captures the mic), a mic mute toggle, and Say / Ask controls. Add `?developer` to the URL to show image diagnostics, speech activity, and the coding-agent chat. |
 
 ## Everything in-process (the default)
 
@@ -206,7 +206,7 @@ dotnet run -- --snapshot      # writes maxheadroom_visemeN.png files
 
 ### Coding-agent chat POC
 
-The right-side **Code agent** panel starts coding tasks on the Max repository and
+In developer mode (`?developer`), the right-side **Code agent** panel starts coding tasks on the Max repository and
 shows progress, the final response, and the draft pull-request URL. Subsequent
 messages continue the current Codex task; **New task** starts a separate one.
 

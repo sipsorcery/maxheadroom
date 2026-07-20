@@ -55,7 +55,7 @@
     </style>
 </head>
 <body>
-    <aside class="activity-panel open" id="activityPanel" aria-label="Speech activity">
+    <aside class="activity-panel open" id="activityPanel" aria-label="Speech activity" hidden>
         <button class="activity-toggle" id="activityToggle" type="button" aria-expanded="true" aria-controls="activityContent" onclick="toggleActivityPanel();">
             <span id="activityToggleIcon" aria-hidden="true">&#9664;</span> Speech log
         </button>
@@ -68,7 +68,7 @@
         </div>
     </aside>
 
-    <aside class="code-panel" id="codePanel" aria-label="Coding agent">
+    <aside class="code-panel" id="codePanel" aria-label="Coding agent" hidden>
         <button class="code-toggle" id="codeToggle" type="button" aria-expanded="false" aria-controls="codeContent" onclick="toggleCodePanel();">
             <span id="codeToggleIcon" aria-hidden="true">&#9664;</span> Code agent
         </button>
@@ -97,7 +97,7 @@
     </aside>
 
     <h2>Max Headroom WebRTC Avatar</h2>
-    <div class="version-badge" id="versionBadge"></div>
+    <div class="version-badge" id="versionBadge" hidden></div>
 
     <video controls autoplay playsinline id="videoCtl"></video>
 
@@ -138,6 +138,7 @@
     <script type="text/javascript">
         const STUN_URL = "stun:stun.cloudflare.com";
         const BASE_URL = window.location.origin;
+        const DEVELOPER_MODE = new URLSearchParams(window.location.search).has('developer');
         var pc;
         var micStream;
         var activityStream;
@@ -147,7 +148,7 @@
         var codeAgentMessages = loadCodeAgentMessages();
 
         async function start() {
-            connectActivityStream(document.querySelector('#serverurl').value);
+            if (DEVELOPER_MODE) connectActivityStream(document.querySelector('#serverurl').value);
             pc = new RTCPeerConnection({ iceServers: [{ urls: STUN_URL }] });
             pc.ontrack = evt => document.querySelector('#videoCtl').srcObject = evt.streams[0];
             pc.oniceconnectionstatechange = () => console.log("ice: " + pc.iceConnectionState);
@@ -494,18 +495,23 @@
         }
 
         document.querySelector('#serverurl').value = BASE_URL;
-        document.querySelector('#codeAgentToken').value = sessionStorage.getItem('max-code-agent-token') || '';
-        for (const message of codeAgentMessages) {
-            appendCodeMessage(message.role, message.text, false);
-        }
-        document.querySelector('#codeMessage').addEventListener('keydown', event => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
-                event.preventDefault();
-                sendCodeAgentMessage();
+        if (DEVELOPER_MODE) {
+            document.querySelector('#activityPanel').hidden = false;
+            document.querySelector('#codePanel').hidden = false;
+            document.querySelector('#versionBadge').hidden = false;
+            document.querySelector('#codeAgentToken').value = sessionStorage.getItem('max-code-agent-token') || '';
+            for (const message of codeAgentMessages) {
+                appendCodeMessage(message.role, message.text, false);
             }
-        });
-        connectActivityStream(BASE_URL);
-        loadVersion();
-        if (document.querySelector('#codeAgentToken').value) connectCodeAgent();
+            document.querySelector('#codeMessage').addEventListener('keydown', event => {
+                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                    event.preventDefault();
+                    sendCodeAgentMessage();
+                }
+            });
+            connectActivityStream(BASE_URL);
+            loadVersion();
+            if (document.querySelector('#codeAgentToken').value) connectCodeAgent();
+        }
     </script>
 </body>
