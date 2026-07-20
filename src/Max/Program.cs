@@ -283,6 +283,9 @@ class Program
         app.UseDefaultFiles();
         app.UseStaticFiles();
 
+        app.MapGet("/dev", () => Results.File(
+            Path.Combine(app.Environment.WebRootPath, "index.html"),
+            "text/html"));
         app.MapGet("/healthz", () => Results.Ok(new { status = "healthy" }));
         app.MapGet("/version", () => Results.Json(new
         {
