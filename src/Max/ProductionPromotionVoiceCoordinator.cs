@@ -64,7 +64,7 @@ internal sealed class ProductionPromotionVoiceCoordinator
                 {
                     return await DispatchAsync(
                         ProductionPromotionApproval.Review,
-                        "I've asked GitHub to create the production deployment pull request and leave it open for your review. Flux will wait until it is merged.",
+                        "I've asked GitHub to create a Max release pull request and leave it open for your review. After it is merged, GitHub will verify and propose the exact staged image for production.",
                         cancellationToken).ConfigureAwait(false);
                 }
 
@@ -72,7 +72,7 @@ internal sealed class ProductionPromotionVoiceCoordinator
                 {
                     return await DispatchAsync(
                         ProductionPromotionApproval.AutoMerge,
-                        "I've asked GitHub to create and automatically merge the production deployment pull request. Flux will deploy the exact staged image after the merge.",
+                        "I've asked GitHub to create and automatically merge the Max release pull request, then verify and promote the exact staged image through the production deployment workflow.",
                         cancellationToken).ConfigureAwait(false);
                 }
 
@@ -96,7 +96,7 @@ internal sealed class ProductionPromotionVoiceCoordinator
             _confirmationExpiresAt = now + ConfirmationLifetime;
             return new(
                 true,
-                "The current staging deployment will be proposed for production. Would you like to review the deployment pull request, or should I merge it automatically? Say review it, auto merge production, or cancel.");
+                "The current staging deployment will be prepared as a Max release. Would you like to review the release pull request, or should I merge the release and deployment pull requests automatically? Say review it, auto merge production, or cancel.");
         }
         finally
         {

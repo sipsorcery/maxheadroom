@@ -239,15 +239,27 @@ conversation. For example:
 2. Say either `Review it`, `Auto merge production`, or `Cancel`.
 
 The first utterance never changes a deployment. The second utterance dispatches
-the `max-production-promotion-requested` event to `doconfigsync`. Review mode
-leaves its generated production deployment PR open; auto mode merges it after
-the workflow verifies that the digest-pinned image is the exact image recorded
-in the staging manifest. Flux observes production only after the PR is merged.
+the `max-production-release-requested` event to the Max repository. That workflow
+reads the exact image running in staging, verifies its source revision, and opens
+a `release/<version>` PR from that revision into `master`.
+
+Review mode leaves the Max release PR open. Auto mode labels and merges it
+automatically. After either merge, `finalize-release` verifies that the master
+tree and staged artifact both match the tested release, creates `v<version>`,
+and dispatches doconfigsync. The generated production deployment PR follows the
+same review or auto-merge choice. Flux observes production only after that PR is
+merged.
 
 | Variable | Purpose |
 |---|---|
-| `DOCONFIGSYNC_DISPATCH_TOKEN` | GitHub token allowed to dispatch repository events to `sipsorcery/doconfigsync`. If absent, Max explains that promotion is not configured. |
-| `DOCONFIGSYNC_REPOSITORY` | Dispatch target; defaults to `sipsorcery/doconfigsync`. |
+| `MAX_RELEASE_DISPATCH_TOKEN` | GitHub token allowed to dispatch repository events to `sipsorcery/maxheadroom`. If absent, Max temporarily falls back to `DOCONFIGSYNC_DISPATCH_TOKEN`. |
+| `MAX_RELEASE_REPOSITORY` | Voice dispatch target; defaults to `sipsorcery/maxheadroom`. |
+
+The Max repository workflow also uses `DOCONFIGSYNC_DISPATCH_TOKEN` to read the
+private staging manifest and dispatch the verified release to doconfigsync. For
+automatic mode the same token must be able to create and merge branches and PRs
+in Max; using a PAT or GitHub App ensures the merged-PR event reaches the
+finalizer.
 
 ## Docker
 
