@@ -1,9 +1,11 @@
 # Builds and publishes the Max Docker image either from an explicit manual ref or
 # automatically when a docker/<channel>/<version> Git tag is pushed.
 #
-# Tag example:
-#   git tag -a docker/test/2026.07.18-1 origin/feature/test -m "Test image"
-#   git push origin docker/test/2026.07.18-1
+# Tag examples:
+#   git tag -a docker/staging/2026.07.18-1 origin/staging -m "Staging image"
+#   git push origin docker/staging/2026.07.18-1
+#   git tag -a docker/master/0.0.10 origin/master -m "Production image"
+#   git push origin docker/master/0.0.10
 #
 # Manual example:
 #   gh workflow run build-image --repo sipsorcery/maxheadroom \
@@ -101,9 +103,12 @@ jobs:
             primary_image="$image_repository:$docker_tag"
             promotion_target=""
 
-            # Updating latest remains an explicit act: only a tag whose channel
-            # declares master or release is allowed to move it or propose a
-            # production deployment.
+            # Promotion remains explicit. Staging tags propose a staging
+            # deployment, while master and release tags move latest and propose
+            # a production deployment.
+            if [[ "$channel" == "staging" ]]; then
+              promotion_target="staging"
+            fi
             if [[ "$channel" == "master" || "$channel" == "release" ]]; then
               image_tags+=("$image_repository:latest")
               promotion_target="production"
@@ -162,12 +167,13 @@ jobs:
             GIT_SHA=${{ steps.settings.outputs.short_sha }}
             BUILD_DESCRIPTION=${{ steps.settings.outputs.description }}
 
-      - name: Propose production deployment
+      - name: Propose deployment
         id: promotion
-        if: steps.settings.outputs.promotion_target == 'production'
+        if: steps.settings.outputs.promotion_target != ''
         shell: bash
         env:
           DOCONFIGSYNC_TOKEN: ${{ secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          PROMOTION_TARGET: ${{ steps.settings.outputs.promotion_target }}
           IMAGE: ${{ steps.settings.outputs.primary_image }}
           IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
           SOURCE_TAG: ${{ steps.settings.outputs.display_ref }}
@@ -182,14 +188,16 @@ jobs:
             exit 0
           fi
 
+          event_type="max-${PROMOTION_TARGET}-image-ready"
           jq -n \
+            --arg event_type "$event_type" \
             --arg image "$IMAGE" \
             --arg digest "$IMAGE_DIGEST" \
             --arg source_tag "$SOURCE_TAG" \
             --arg source_sha "$SOURCE_SHA" \
             --arg build_run_url "$BUILD_RUN_URL" \
             '{
-              event_type: "max-production-image-ready",
+              event_type: $event_type,
               client_payload: {
                 image: $image,
                 digest: $digest,
@@ -203,7 +211,7 @@ jobs:
               repos/sipsorcery/doconfigsync/dispatches \
               --input -
 
-          echo "status=dispatched to sipsorcery/doconfigsync" >> "$GITHUB_OUTPUT"
+          echo "status=$PROMOTION_TARGET proposal dispatched to sipsorcery/doconfigsync" >> "$GITHUB_OUTPUT"
 
       - name: Summary
         env:
