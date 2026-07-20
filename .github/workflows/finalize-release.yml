@@ -1,0 +1,268 @@
+# Finalizes a release after a release/<version> pull request is merged into
+# master. The release PR creator must use a PAT or GitHub App for automatic
+# merges so this pull_request closed event is emitted; GITHUB_TOKEN-generated
+# events are intentionally suppressed by GitHub.
+#
+# The safe default is to leave the doconfigsync production PR open. Add the
+# production-auto-merge label to the release PR to carry an earlier explicit
+# auto-merge approval through to the deployment PR.
+name: finalize-release
+run-name: Finalize Max release PR #${{ github.event.pull_request.number }}
+
+on:
+  pull_request:
+    branches:
+      - master
+    types:
+      - closed
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: finalize-release-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  finalize:
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      startsWith(github.event.pull_request.head.ref, 'release/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Validate merged release
+        id: release
+        shell: bash
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$HEAD_REF" =~ ^release/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$ ]]; then
+            echo "::error::Expected release/<version> head branch; got '$HEAD_REF'."
+            exit 1
+          fi
+          version="${BASH_REMATCH[1]}"
+
+          if [[ ! "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Invalid release source SHA '$HEAD_SHA'."
+            exit 1
+          fi
+          if [[ ! "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Invalid master merge SHA '$MERGE_SHA'."
+            exit 1
+          fi
+
+          git fetch --no-tags origin "$HEAD_SHA" "$MERGE_SHA"
+          source_tree="$(git rev-parse "$HEAD_SHA^{tree}")"
+          merge_tree="$(git rev-parse "$MERGE_SHA^{tree}")"
+          if [[ "$source_tree" != "$merge_tree" ]]; then
+            echo "::error::The merged master tree does not match the tested release source tree."
+            echo "::error::Source tree: $source_tree; merged tree: $merge_tree."
+            exit 1
+          fi
+
+          approval_mode="review"
+          if jq -e 'index("production-auto-merge") != null' <<< "$LABELS_JSON" >/dev/null; then
+            approval_mode="auto"
+          fi
+
+          {
+            echo "version=$version"
+            echo "release_tag=v$version"
+            echo "source_sha=$HEAD_SHA"
+            echo "master_sha=$MERGE_SHA"
+            echo "approval_mode=$approval_mode"
+            echo "pr_url=$PR_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Read current staging image
+        id: staging
+        shell: bash
+        env:
+          DOCONFIGSYNC_TOKEN: ${{ secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "$DOCONFIGSYNC_TOKEN" ]]; then
+            echo "::error::DOCONFIGSYNC_DISPATCH_TOKEN is not configured."
+            exit 1
+          fi
+
+          staging_manifest="$(
+            GH_TOKEN="$DOCONFIGSYNC_TOKEN" gh api \
+              --method GET \
+              repos/sipsorcery/doconfigsync/contents/configs/max-headroom-staging/deployment.yaml \
+              -f ref=master \
+              --jq .content |
+              base64 --decode
+          )"
+          pinned_image="$(
+            sed -n 's/^[[:space:]]*image:[[:space:]]*\(registry\.digitalocean\.com\/sipsorcery-demo\/webrtc-max-headroom:[^[:space:]]*@sha256:[0-9a-f]\{64\}\)[[:space:]]*$/\1/p' \
+              <<< "$staging_manifest"
+          )"
+          if [[ -z "$pinned_image" || "$(printf '%s\n' "$pinned_image" | wc -l)" -ne 1 ]]; then
+            echo "::error::Expected exactly one digest-pinned Max image in the staging manifest."
+            exit 1
+          fi
+
+          if [[ ! "$pinned_image" =~ ^(registry\.digitalocean\.com/sipsorcery-demo/webrtc-max-headroom:([^@]+))@(sha256:[0-9a-f]{64})$ ]]; then
+            echo "::error::Current staging image '$pinned_image' has an invalid format."
+            exit 1
+          fi
+          image="${BASH_REMATCH[1]}"
+          image_tag="${BASH_REMATCH[2]}"
+          digest="${BASH_REMATCH[3]}"
+          if [[ "$image_tag" != "$VERSION" && "$image_tag" != "staging-$VERSION" ]]; then
+            echo "::error::Current staging image tag '$image_tag' is not release version '$VERSION'."
+            exit 1
+          fi
+
+          {
+            echo "image=$image"
+            echo "digest=$digest"
+            echo "pinned_image=$pinned_image"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_PASSWORD }}
+
+      - name: Verify staged artifact provenance
+        shell: bash
+        env:
+          IMAGE: ${{ steps.staging.outputs.image }}
+          PINNED_IMAGE: ${{ steps.staging.outputs.pinned_image }}
+          EXPECTED_DIGEST: ${{ steps.staging.outputs.digest }}
+          EXPECTED_SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          actual_digest="$(
+            docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' |
+              jq -er '.digest'
+          )"
+          if [[ "$actual_digest" != "$EXPECTED_DIGEST" ]]; then
+            echo "::error::Registry reports $actual_digest for $IMAGE, expected $EXPECTED_DIGEST."
+            exit 1
+          fi
+
+          source_sha="$(
+            docker buildx imagetools inspect "$PINNED_IMAGE" --format '{{json .Image}}' |
+              jq -er '.config.Labels["org.opencontainers.image.revision"]'
+          )"
+          if [[ "$source_sha" != "$EXPECTED_SOURCE_SHA" ]]; then
+            echo "::error::Staged image was built from $source_sha, but the merged release PR used $EXPECTED_SOURCE_SHA."
+            exit 1
+          fi
+
+      - name: Tag master release
+        id: tag
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          MASTER_SHA: ${{ steps.release.outputs.master_sha }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if git ls-remote --exit-code --tags origin "refs/tags/$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch --force origin "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            tagged_sha="$(git rev-list -n 1 "$RELEASE_TAG")"
+            if [[ "$tagged_sha" != "$MASTER_SHA" ]]; then
+              echo "::error::Tag $RELEASE_TAG already points to $tagged_sha, not $MASTER_SHA."
+              exit 1
+            fi
+            echo "status=already existed at $MASTER_SHA" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$RELEASE_TAG" "$MASTER_SHA" -m "Max release $VERSION"
+          git push origin "refs/tags/$RELEASE_TAG"
+          echo "status=created at $MASTER_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Propose production deployment
+        id: deployment
+        shell: bash
+        env:
+          DOCONFIGSYNC_TOKEN: ${{ secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          APPROVAL_MODE: ${{ steps.release.outputs.approval_mode }}
+          RELEASE_VERSION: ${{ steps.release.outputs.version }}
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          MASTER_SHA: ${{ steps.release.outputs.master_sha }}
+          RELEASE_PR_URL: ${{ steps.release.outputs.pr_url }}
+          PINNED_IMAGE: ${{ steps.staging.outputs.pinned_image }}
+        run: |
+          set -euo pipefail
+
+          jq -n \
+            --arg approval_mode "$APPROVAL_MODE" \
+            --arg release_version "$RELEASE_VERSION" \
+            --arg release_tag "$RELEASE_TAG" \
+            --arg source_sha "$SOURCE_SHA" \
+            --arg master_sha "$MASTER_SHA" \
+            --arg release_pr_url "$RELEASE_PR_URL" \
+            --arg pinned_image "$PINNED_IMAGE" \
+            '{
+              event_type: "max-production-promotion-requested",
+              client_payload: {
+                approval_mode: $approval_mode,
+                requested_by: "max-release-finalizer",
+                release_version: $release_version,
+                release_tag: $release_tag,
+                source_sha: $source_sha,
+                master_sha: $master_sha,
+                release_pr_url: $release_pr_url,
+                pinned_image: $pinned_image
+              }
+            }' |
+            GH_TOKEN="$DOCONFIGSYNC_TOKEN" gh api \
+              --method POST \
+              repos/sipsorcery/doconfigsync/dispatches \
+              --input -
+
+          echo "status=production proposal dispatched in $APPROVAL_MODE mode" >> "$GITHUB_OUTPUT"
+
+      - name: Summary
+        env:
+          RELEASE_TAG: ${{ steps.release.outputs.release_tag }}
+          SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          MASTER_SHA: ${{ steps.release.outputs.master_sha }}
+          RELEASE_PR_URL: ${{ steps.release.outputs.pr_url }}
+          APPROVAL_MODE: ${{ steps.release.outputs.approval_mode }}
+          PINNED_IMAGE: ${{ steps.staging.outputs.pinned_image }}
+          TAG_STATUS: ${{ steps.tag.outputs.status }}
+          DEPLOYMENT_STATUS: ${{ steps.deployment.outputs.status }}
+        run: |
+          {
+            echo "## Max release finalized"
+            echo
+            echo "- Release PR: $RELEASE_PR_URL"
+            echo "- Tested source: \`$SOURCE_SHA\`"
+            echo "- Master merge: \`$MASTER_SHA\`"
+            echo "- Tag \`$RELEASE_TAG\`: $TAG_STATUS"
+            echo "- Verified staging image: \`$PINNED_IMAGE\`"
+            echo "- Approval mode: \`$APPROVAL_MODE\`"
+            echo "- Deployment: $DEPLOYMENT_STATUS"
+          } >> "$GITHUB_STEP_SUMMARY"
