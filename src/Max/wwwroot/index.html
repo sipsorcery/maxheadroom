@@ -52,6 +52,7 @@
         .code-actions button:last-child { flex: 1; background: #713b8c; color: #fff; border: 1px solid #a66ac0; }
         .version-badge { margin: -8px 0 12px; color: #6b9cab; font-size: 0.75em; }
         .version-badge:empty { display: none; }
+        body.developer-mode .page-title { color: #e0a020; }
     </style>
 </head>
 <body>
@@ -96,7 +97,7 @@
         </div>
     </aside>
 
-    <h2>Max Headroom WebRTC Avatar</h2>
+    <h2 class="page-title">Max Headroom WebRTC Avatar</h2>
     <div class="version-badge" id="versionBadge" hidden></div>
 
     <video controls autoplay playsinline id="videoCtl"></video>
@@ -139,6 +140,7 @@
         const STUN_URL = "stun:stun.cloudflare.com";
         const BASE_URL = window.location.origin;
         const DEVELOPER_MODE = window.location.pathname === '/dev';
+        document.body.classList.toggle('developer-mode', DEVELOPER_MODE);
         var pc;
         var micStream;
         var activityStream;
