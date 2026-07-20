@@ -670,7 +670,7 @@ namespace demo
                         _rng.Next(2) == 0 ? new SKColor(0xFF, 0x00, 0x60, 0x60) : new SKColor(0x00, 0xE0, 0xFF, 0x60),
                         SKBlendMode.Screen)
                 };
-                canvas.DrawImage(snapshot, src, dst, tint);
+                canvas.DrawImage(snapshot, src, dst, SKSamplingOptions.Default, tint);
             }
         }
 
