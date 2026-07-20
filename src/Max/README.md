@@ -287,49 +287,41 @@ the same build identity and pipeline in a small badge under the title.
 
 ### Automated DigitalOcean Container Registry builds
 
-Pushing a Git tag named `docker/<channel>/<version>` automatically builds the commit
-the tag points to and publishes it to the DigitalOcean Container Registry. The
+Pushing a Git tag named `docker/staging/<version>` automatically builds the commit
+the tag points to and publishes an environment-neutral artifact to the DigitalOcean
+Container Registry. The
 workflow uses the `DIGITAL_OCEAN_CONTAINER_REGISTRY_URL`,
 `DIGITAL_OCEAN_CONTAINER_REGISTRY_USERNAME`, and
 `DIGITAL_OCEAN_CONTAINER_REGISTRY_PASSWORD` Actions secrets. For example, to build
-the current commit:
-
-```powershell
-git tag -a docker/test/2026.07.18-1 -m "Test image"
-git push origin docker/test/2026.07.18-1
-```
-
-It is not necessary to check out the source branch. This tags the current remote tip
-of `feature/test` instead:
+the current staging commit:
 
 ```powershell
 git fetch origin
-git tag -a docker/test/2026.07.18-1 origin/feature/test -m "Test image"
-git push origin docker/test/2026.07.18-1
+git tag -a docker/staging/0.0.13 origin/staging -m "Max 0.0.13 candidate"
+git push origin docker/staging/0.0.13
 ```
 
 The example publishes these immutable image references:
 
 ```text
-registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:test-2026.07.18-1
+registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:0.0.13
 registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:sha-0123abcd
 ```
 
-The `channel` is an image/build label; it does not select the source branch. The Git
-commit to which the tag points is always the source of the build. A `master` or
-`release` channel also updates
-`registry.digitalocean.com/sipsorcery-demo/webrtc-max-headroom:latest`. Build tags
-should not be moved or reused.
+`staging` describes the build and deployment trigger, not the artifact. The Git
+commit to which the tag points is always the source of the build, and the resulting
+version-and-digest pair is later promoted to production without being rebuilt.
+Build tags and version tags must not be moved or reused.
 
 The tag-trigger workflow must be present in the tagged commit. Branches created before
 this capability was added must merge or rebase the workflow change before their tags
 can start automatic builds. The workflow's existing manual-dispatch mode remains
 available when a custom image reference or build description is needed.
 
-After a successful `master` or `release` channel build, the workflow sends the exact
-image tag and digest to the `sipsorcery/doconfigsync` repository. That repository
-validates the published digest and opens a production deployment PR; merging the PR
-remains the human approval that allows Flux to deploy it. Other channels are build-only.
+After a successful staging build, the workflow sends the exact version tag and digest
+to the `sipsorcery/doconfigsync` repository. That repository validates the published
+digest and updates staging. Production promotion is handled separately by the guarded
+release PR and finalizer workflow, using this same artifact.
 
 Cross-repository dispatch requires a fine-grained GitHub token limited to the
 `sipsorcery/doconfigsync` repository with **Contents: read and write** permission. Store
