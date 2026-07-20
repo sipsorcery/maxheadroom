@@ -2,4 +2,5 @@
   <Project Path="AvatarPipeline/AvatarPipeline.csproj" />
   <Project Path="Max/Max.csproj" />
   <Project Path="MaxBench/MaxBench.csproj" />
+  <Project Path="../tests/Max.Tests/Max.Tests.csproj" />
 </Solution>

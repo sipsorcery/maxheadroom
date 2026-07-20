@@ -185,12 +185,12 @@ internal sealed class CodeAgentClient : IDisposable
         {message.Trim()}
 
         Deliver the result through GitHub:
-        - Inspect the repository status and fetch the current default branch from origin.
-        - Create a new, descriptively named branch; never commit directly to master.
+        - Inspect the repository status and fetch staging from origin.
+        - Create a new, descriptively named branch from origin/staging; never commit directly to staging or master.
         - Implement the smallest complete change that satisfies the request.
         - Run focused validation appropriate to the change.
         - Commit the intended files and push the branch using the configured GitHub identity.
-        - Create a draft pull request targeting master with a useful title and description.
+        - Create a ready-for-review pull request targeting staging with a useful title and description; do not use draft mode.
         - Finish by reporting the pull request URL, validation performed, and any remaining risks.
         """;
 

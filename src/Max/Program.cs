@@ -41,6 +41,8 @@
 //   CODE_AGENT_ENDPOINT / CODE_AGENT_API_TOKEN / CODE_AGENT_REPOSITORY - internal
 //                          coding-agent controller connection.
 //   CODE_AGENT_UI_TOKEN - separate browser-to-Max token required by /code-agent/*.
+//   DOCONFIGSYNC_DISPATCH_TOKEN / DOCONFIGSYNC_REPOSITORY - GitHub credential and
+//                          repository used by the guarded voice production promotion.
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
@@ -89,6 +91,7 @@ class Program
     private static ISpeechRecognizer _recognizer;
     private static ILlmClient _llm;
     private static OpenAiRealtimeSession _openAiRealtimeSession;
+    private static ProductionPromotionVoiceCoordinator _productionPromotionCoordinator;
 
     // Barge-in: monotonic "current turn" counter. Every new thing to say (a typed /ask,
     // a /say, or a recognised utterance) starts a turn, which immediately hard-stops
@@ -278,6 +281,13 @@ class Program
             Environment.GetEnvironmentVariable("CODE_AGENT_ENDPOINT"),
             Environment.GetEnvironmentVariable("CODE_AGENT_API_TOKEN"),
             Environment.GetEnvironmentVariable("CODE_AGENT_REPOSITORY") ?? "sipsorcery/maxheadroom");
+        using var productionPromotionClient = new ProductionPromotionClient(
+            Environment.GetEnvironmentVariable("DOCONFIGSYNC_DISPATCH_TOKEN"),
+            Environment.GetEnvironmentVariable("DOCONFIGSYNC_REPOSITORY")
+                ?? "sipsorcery/doconfigsync");
+        _productionPromotionCoordinator = new ProductionPromotionVoiceCoordinator(
+            productionPromotionClient,
+            _logger);
         string codeAgentUiToken = Environment.GetEnvironmentVariable("CODE_AGENT_UI_TOKEN");
 
         app.UseDefaultFiles();
@@ -670,6 +680,11 @@ class Program
         PublishUiEvent("stt", text);
         try
         {
+            if (await TryHandleProductionPromotionAsync(text, null).ConfigureAwait(false))
+            {
+                return;
+            }
+
             var reply = await AskAsync(text);
             if (!string.IsNullOrWhiteSpace(reply))
             {
@@ -680,6 +695,42 @@ class Program
         {
             _logger.LogError(excp, "Error handling recognized speech.");
         }
+    }
+
+    private static async Task<bool> TryHandleProductionPromotionAsync(
+        string transcript,
+        OpenAiRealtimeSession realtimeSession)
+    {
+        var coordinator = _productionPromotionCoordinator;
+        if (coordinator == null)
+        {
+            return false;
+        }
+
+        var result = await coordinator.TryHandleAsync(transcript).ConfigureAwait(false);
+        if (!result.Handled)
+        {
+            return false;
+        }
+
+        if (realtimeSession != null)
+        {
+            await realtimeSession.AskTextAsync(
+                $"Repeat this text exactly, without adding or changing any words: {result.Reply}")
+                .ConfigureAwait(false);
+        }
+        else
+        {
+            PublishUiEvent("llm", result.Reply);
+            var speaker = _speaker;
+            if (speaker != null)
+            {
+                BeginTurn();
+                await speaker.SpeakAsync(result.Reply).ConfigureAwait(false);
+            }
+        }
+
+        return true;
     }
 
     /// <summary>Streams speech activity to each open browser using server-sent events.</summary>
@@ -804,6 +855,9 @@ class Program
                 audioSource);
             realtimeSession.InputTranscript += text => PublishUiEvent("stt", text);
             realtimeSession.OutputTranscript += text => PublishUiEvent("llm", text);
+            var promotionRealtimeSession = realtimeSession;
+            realtimeSession.InputTranscriptHandler = text =>
+                TryHandleProductionPromotionAsync(text, promotionRealtimeSession);
 
             pc.OnAudioFrameReceived += frame =>
             {
