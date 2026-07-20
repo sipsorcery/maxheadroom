@@ -195,9 +195,8 @@ jobs:
           existing_branch_sha="$(
             gh api \
               --method GET \
-              "repos/$GITHUB_REPOSITORY/git/ref/heads/$RELEASE_BRANCH" \
-              --jq .object.sha 2>/dev/null ||
-              true
+              "repos/$GITHUB_REPOSITORY/git/matching-refs/heads/$RELEASE_BRANCH" \
+              --jq "map(select(.ref == \"refs/heads/$RELEASE_BRANCH\"))[0].object.sha // \"\""
           )"
           if [[ -n "$existing_branch_sha" && "$existing_branch_sha" != "$SOURCE_SHA" ]]; then
             echo "::error::Branch $RELEASE_BRANCH already points to $existing_branch_sha, not $SOURCE_SHA."
