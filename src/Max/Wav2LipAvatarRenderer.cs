@@ -589,7 +589,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
 
         // Reused scratch buffers (see the field comments) - every draw below covers each
         // bitmap's full pixel area, so no explicit clear is needed before reuse.
-        _frameCanvas.DrawBitmap(_bgCache, SKRect.Create(WIDTH, HEIGHT), _defaultPaint);
+        _frameCanvas.DrawBitmap(_bgCache, SKRect.Create(WIDTH, HEIGHT), SKSamplingOptions.Default, _defaultPaint);
 
         // Figure layer: persona copy + live mouth + blink, drawn through zoom*pose so the
         // matte alpha warps with it (one SrcOver draw = the whole blend).
@@ -613,8 +613,9 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             }
         }
 
-        _frameCanvas.SetMatrix(PoseMatrix(t).PreConcat(ZoomMatrix()));
-        _frameCanvas.DrawBitmap(fg, 0, 0, _defaultPaint);
+        var transform = PoseMatrix(t).PreConcat(ZoomMatrix());
+        _frameCanvas.SetMatrix(in transform);
+        _frameCanvas.DrawBitmap(fg, 0, 0, SKSamplingOptions.Default, _defaultPaint);
         _frameCanvas.ResetMatrix();
 
         return GradeToBgr(_frameBitmap);
@@ -636,7 +637,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
         // pasting opaque there would punch a hard rectangle through the figure's alpha.
         var (y1, y2, x1, x2) = _faceBox;
         int bw = x2 - x1, bh = y2 - y1;
-        _scaledMouthCanvas.DrawBitmap(_mouthBitmap, SKRect.Create(bw, bh), _defaultPaint);
+        _scaledMouthCanvas.DrawBitmap(_mouthBitmap, SKRect.Create(bw, bh), SKSamplingOptions.Default, _defaultPaint);
         unsafe
         {
             var px = (byte*)_scaledMouthBitmap.GetPixels().ToPointer();
@@ -656,7 +657,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             }
         }
 
-        fgCanvas.DrawBitmap(_scaledMouthBitmap, x1, y1, _srcPaint);
+        fgCanvas.DrawBitmap(_scaledMouthBitmap, x1, y1, SKSamplingOptions.Default, _srcPaint);
     }
 
     /// <summary>Blink: stretch the lid skin just above each eye down over it (per the sidecar).</summary>
@@ -673,8 +674,8 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             int stripH = Math.Max(3, (int)(h * 0.35));
             var src = SKRect.Create(x, y - stripH, w, stripH);
             var dst = SKRect.Create(x, y, w, cover);
-            _blinkStripCanvases[i].DrawBitmap(_persona, src, SKRect.Create(w, stripH));
-            fgCanvas.DrawBitmap(_blinkStripBitmaps[i], dst, _srcPaint);
+            _blinkStripCanvases[i].DrawBitmap(_persona, src, SKRect.Create(w, stripH), SKSamplingOptions.Default);
+            fgCanvas.DrawBitmap(_blinkStripBitmaps[i], dst, SKSamplingOptions.Default, _srcPaint);
         }
     }
 
@@ -867,6 +868,7 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
                 persona,
                 SKRect.Create(x1, y1, x2 - x1, y2 - y1),
                 SKRect.Create(IMG_SIZE, IMG_SIZE),
+                SKSamplingOptions.Default,
                 new SKPaint());
         }
 
