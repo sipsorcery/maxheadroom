@@ -1,11 +1,11 @@
 # Builds and publishes the Max Docker image either from an explicit manual ref or
-# automatically when a docker/<channel>/<version> Git tag is pushed.
+# automatically when a docker/staging/<version> Git tag is pushed. "staging" is
+# the build trigger; the published artifact is environment-neutral and is later
+# promoted to production without rebuilding it.
 #
 # Tag examples:
-#   git tag -a docker/staging/2026.07.18-1 origin/staging -m "Staging image"
-#   git push origin docker/staging/2026.07.18-1
-#   git tag -a docker/master/0.0.10 origin/master -m "Production image"
-#   git push origin docker/master/0.0.10
+#   git tag -a docker/staging/0.0.13 origin/staging -m "Max 0.0.13 candidate"
+#   git push origin docker/staging/0.0.13
 #
 # Manual example:
 #   gh workflow run build-image --repo sipsorcery/maxheadroom \
@@ -16,7 +16,7 @@ name: build-image
 on:
   push:
     tags:
-      - "docker/*/*"
+      - "docker/staging/*"
   workflow_dispatch:
     inputs:
       branch:
@@ -80,39 +80,22 @@ jobs:
           image_repository="$registry_repository/$IMAGE_NAME"
 
           if [[ "$EVENT_NAME" == "push" ]]; then
-            if [[ ! "$TAG_NAME" =~ ^docker/([a-z0-9][a-z0-9._-]{0,31})/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$ ]]; then
-              echo "::error::Expected tag docker/<channel>/<version>; got '$TAG_NAME'."
+            if [[ ! "$TAG_NAME" =~ ^docker/staging/([A-Za-z0-9][A-Za-z0-9._-]{0,63})$ ]]; then
+              echo "::error::Expected tag docker/staging/<version>; got '$TAG_NAME'."
               exit 1
             fi
 
-            channel="${BASH_REMATCH[1]}"
-            version="${BASH_REMATCH[2]}"
-            docker_tag="${channel}-${version}"
-            if (( ${#docker_tag} > 128 )); then
-              echo "::error::Generated Docker tag is longer than 128 characters."
-              exit 1
-            fi
-
-            source_ref="$channel"
+            channel="staging"
+            version="${BASH_REMATCH[1]}"
+            source_ref="staging"
             display_ref="$TAG_NAME"
             description="Git tag $TAG_NAME"
             image_tags=(
-              "$image_repository:$docker_tag"
+              "$image_repository:$version"
               "$image_repository:sha-$short_sha"
             )
-            primary_image="$image_repository:$docker_tag"
-            promotion_target=""
-
-            # Promotion remains explicit. Staging tags propose a staging
-            # deployment, while master and release tags move latest and propose
-            # a production deployment.
-            if [[ "$channel" == "staging" ]]; then
-              promotion_target="staging"
-            fi
-            if [[ "$channel" == "master" || "$channel" == "release" ]]; then
-              image_tags+=("$image_repository:latest")
-              promotion_target="production"
-            fi
+            primary_image="$image_repository:$version"
+            promotion_target="staging"
           else
             channel=""
             source_ref="$MANUAL_REF"
@@ -148,6 +131,18 @@ jobs:
           registry: ${{ steps.settings.outputs.registry_host }}
           username: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_USERNAME }}
           password: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_PASSWORD }}
+
+      - name: Reject reused version
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          IMAGE: ${{ steps.settings.outputs.primary_image }}
+        run: |
+          set -euo pipefail
+          if docker buildx imagetools inspect "$IMAGE" >/dev/null 2>&1; then
+            echo "::error::Versioned image $IMAGE already exists. Build tags and versions are immutable; use a new version."
+            exit 1
+          fi
 
       - name: Build and push
         id: image
