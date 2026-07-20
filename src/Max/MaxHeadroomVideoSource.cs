@@ -385,48 +385,54 @@ namespace demo
                     new SKPoint(cx - 220, top), new SKPoint(cx + 220, HEIGHT),
                     new[] { new SKColor(0x10, 0x12, 0x1C), new SKColor(0x28, 0x2C, 0x3A), new SKColor(0x10, 0x12, 0x1C) },
                     new[] { 0f, 0.5f, 1f }, SKShaderTileMode.Clamp);
-                using var path = new SKPath();
-                path.MoveTo(cx - 70, top);
-                path.CubicTo(cx - 150, top + 10, cx - 230, top + 70, cx - 250, HEIGHT);
-                path.LineTo(cx + 250, HEIGHT);
-                path.CubicTo(cx + 230, top + 70, cx + 150, top + 10, cx + 70, top);
-                path.Close();
+                using var pathBuilder = new SKPathBuilder();
+                pathBuilder.MoveTo(cx - 70, top);
+                pathBuilder.CubicTo(cx - 150, top + 10, cx - 230, top + 70, cx - 250, HEIGHT);
+                pathBuilder.LineTo(cx + 250, HEIGHT);
+                pathBuilder.CubicTo(cx + 230, top + 70, cx + 150, top + 10, cx + 70, top);
+                pathBuilder.Close();
+                using var path = pathBuilder.Detach();
                 canvas.DrawPath(path, jacket);
             }
 
             // Shirt wedge.
             using (var shirt = new SKPaint { Color = new SKColor(0xC8, 0xD6, 0xE8), IsAntialias = true })
-            using (var path = new SKPath())
             {
-                path.MoveTo(cx - 46, top - 6);
-                path.LineTo(cx + 46, top - 6);
-                path.LineTo(cx + 30, HEIGHT);
-                path.LineTo(cx - 30, HEIGHT);
-                path.Close();
+                using var pathBuilder = new SKPathBuilder();
+                pathBuilder.MoveTo(cx - 46, top - 6);
+                pathBuilder.LineTo(cx + 46, top - 6);
+                pathBuilder.LineTo(cx + 30, HEIGHT);
+                pathBuilder.LineTo(cx - 30, HEIGHT);
+                pathBuilder.Close();
+                using var path = pathBuilder.Detach();
                 canvas.DrawPath(path, shirt);
             }
 
             // Shiny lapels.
             using (var lapel = new SKPaint { Color = new SKColor(0x3A, 0x40, 0x52), IsAntialias = true })
             {
-                using var l = new SKPath();
-                l.MoveTo(cx - 60, top); l.LineTo(cx - 6, top + 18); l.LineTo(cx - 64, top + 120); l.Close();
+                using var lBuilder = new SKPathBuilder();
+                lBuilder.MoveTo(cx - 60, top); lBuilder.LineTo(cx - 6, top + 18); lBuilder.LineTo(cx - 64, top + 120); lBuilder.Close();
+                using var l = lBuilder.Detach();
                 canvas.DrawPath(l, lapel);
-                using var r = new SKPath();
-                r.MoveTo(cx + 60, top); r.LineTo(cx + 6, top + 18); r.LineTo(cx + 64, top + 120); r.Close();
+                using var rBuilder = new SKPathBuilder();
+                rBuilder.MoveTo(cx + 60, top); rBuilder.LineTo(cx + 6, top + 18); rBuilder.LineTo(cx + 64, top + 120); rBuilder.Close();
+                using var r = rBuilder.Detach();
                 canvas.DrawPath(r, lapel);
             }
 
             // Collar knot + tie blade.
             using (var tie = new SKPaint { Color = new SKColor(0x1C, 0x3A, 0x86), IsAntialias = true })
             {
-                using var knot = new SKPath();
-                knot.MoveTo(cx - 14, top + 4); knot.LineTo(cx + 14, top + 4);
-                knot.LineTo(cx + 18, top + 30); knot.LineTo(cx - 18, top + 30); knot.Close();
+                using var knotBuilder = new SKPathBuilder();
+                knotBuilder.MoveTo(cx - 14, top + 4); knotBuilder.LineTo(cx + 14, top + 4);
+                knotBuilder.LineTo(cx + 18, top + 30); knotBuilder.LineTo(cx - 18, top + 30); knotBuilder.Close();
+                using var knot = knotBuilder.Detach();
                 canvas.DrawPath(knot, tie);
-                using var blade = new SKPath();
-                blade.MoveTo(cx - 16, top + 30); blade.LineTo(cx + 16, top + 30);
-                blade.LineTo(cx + 22, HEIGHT); blade.LineTo(cx - 22, HEIGHT); blade.Close();
+                using var bladeBuilder = new SKPathBuilder();
+                bladeBuilder.MoveTo(cx - 16, top + 30); bladeBuilder.LineTo(cx + 16, top + 30);
+                bladeBuilder.LineTo(cx + 22, HEIGHT); bladeBuilder.LineTo(cx - 22, HEIGHT); bladeBuilder.Close();
+                using var blade = bladeBuilder.Detach();
                 canvas.DrawPath(blade, tie);
             }
         }
@@ -447,15 +453,16 @@ namespace demo
         // soft unlit-side shadow for the hard plastic-CGI look.
         private static void DrawFace(SKCanvas canvas, float cx, float cy)
         {
-            using var path = new SKPath();
+            using var pathBuilder = new SKPathBuilder();
             float t = cy - 175;   // top of forehead
-            path.MoveTo(cx - 118, t + 30);
-            path.CubicTo(cx - 126, t - 6, cx + 126, t - 6, cx + 118, t + 30);    // forehead
-            path.CubicTo(cx + 150, cy - 40, cx + 140, cy + 10, cx + 110, cy + 70); // right temple/cheek
-            path.CubicTo(cx + 92, cy + 130, cx + 40, cy + 168, cx, cy + 170);      // right jaw -> chin
-            path.CubicTo(cx - 40, cy + 168, cx - 92, cy + 130, cx - 110, cy + 70); // left jaw
-            path.CubicTo(cx - 140, cy + 10, cx - 150, cy - 40, cx - 118, t + 30);  // left temple
-            path.Close();
+            pathBuilder.MoveTo(cx - 118, t + 30);
+            pathBuilder.CubicTo(cx - 126, t - 6, cx + 126, t - 6, cx + 118, t + 30);    // forehead
+            pathBuilder.CubicTo(cx + 150, cy - 40, cx + 140, cy + 10, cx + 110, cy + 70); // right temple/cheek
+            pathBuilder.CubicTo(cx + 92, cy + 130, cx + 40, cy + 168, cx, cy + 170);      // right jaw -> chin
+            pathBuilder.CubicTo(cx - 40, cy + 168, cx - 92, cy + 130, cx - 110, cy + 70); // left jaw
+            pathBuilder.CubicTo(cx - 140, cy + 10, cx - 150, cy - 40, cx - 118, t + 30);  // left temple
+            pathBuilder.Close();
+            using var path = pathBuilder.Detach();
 
             using (var skin = new SKPaint { IsAntialias = true })
             {
@@ -480,13 +487,14 @@ namespace demo
         private static void DrawHair(SKCanvas canvas, float cx, float cy)
         {
             float t = cy - 175;
-            using var path = new SKPath();
-            path.MoveTo(cx - 122, t + 40);
-            path.CubicTo(cx - 130, t - 60, cx + 130, t - 60, cx + 122, t + 40);  // dome
-            path.CubicTo(cx + 96, t + 6, cx + 60, t + 14, cx + 30, t + 22);      // hairline
-            path.CubicTo(cx + 12, t + 34, cx - 12, t + 34, cx - 30, t + 22);
-            path.CubicTo(cx - 60, t + 14, cx - 96, t + 6, cx - 122, t + 40);
-            path.Close();
+            using var pathBuilder = new SKPathBuilder();
+            pathBuilder.MoveTo(cx - 122, t + 40);
+            pathBuilder.CubicTo(cx - 130, t - 60, cx + 130, t - 60, cx + 122, t + 40);  // dome
+            pathBuilder.CubicTo(cx + 96, t + 6, cx + 60, t + 14, cx + 30, t + 22);      // hairline
+            pathBuilder.CubicTo(cx + 12, t + 34, cx - 12, t + 34, cx - 30, t + 22);
+            pathBuilder.CubicTo(cx - 60, t + 14, cx - 96, t + 6, cx - 122, t + 40);
+            pathBuilder.Close();
+            using var path = pathBuilder.Detach();
 
             using (var hair = new SKPaint { IsAntialias = true })
             {
@@ -504,9 +512,10 @@ namespace demo
                 for (int i = -5; i <= 5; i++)
                 {
                     float x = cx + i * 20;
-                    using var s = new SKPath();
-                    s.MoveTo(x, t - 40);
-                    s.CubicTo(x + 6, t - 10, x + 6, t + 20, x + 2, t + 50);
+                    using var sBuilder = new SKPathBuilder();
+                    sBuilder.MoveTo(x, t - 40);
+                    sBuilder.CubicTo(x + 6, t - 10, x + 6, t + 20, x + 2, t + 50);
+                    using var s = sBuilder.Detach();
                     canvas.DrawPath(s, strand);
                 }
             }
@@ -515,9 +524,10 @@ namespace demo
                 for (int i = -4; i <= 4; i++)
                 {
                     float x = cx + i * 20 + 10;
-                    using var s = new SKPath();
-                    s.MoveTo(x, t - 40);
-                    s.CubicTo(x + 6, t - 10, x + 6, t + 20, x + 2, t + 50);
+                    using var sBuilder = new SKPathBuilder();
+                    sBuilder.MoveTo(x, t - 40);
+                    sBuilder.CubicTo(x + 6, t - 10, x + 6, t + 20, x + 2, t + 50);
+                    using var s = sBuilder.Detach();
                     canvas.DrawPath(s, dark);
                 }
             }
@@ -566,12 +576,13 @@ namespace demo
         private static void DrawNose(SKCanvas canvas, float cx, float cy)
         {
             using (var sh = new SKPaint { Color = new SKColor(0x7A, 0x44, 0x18, 0x55), IsAntialias = true })
-            using (var p = new SKPath())
             {
-                p.MoveTo(cx - 6, cy - 60);
-                p.LineTo(cx + 14, cy + 18);
-                p.CubicTo(cx + 16, cy + 34, cx - 16, cy + 34, cx - 16, cy + 20);
-                p.Close();
+                using var pBuilder = new SKPathBuilder();
+                pBuilder.MoveTo(cx - 6, cy - 60);
+                pBuilder.LineTo(cx + 14, cy + 18);
+                pBuilder.CubicTo(cx + 16, cy + 34, cx - 16, cy + 34, cx - 16, cy + 20);
+                pBuilder.Close();
+                using var p = pBuilder.Detach();
                 canvas.DrawPath(p, sh);
             }
             using (var hl = new SKPaint { Color = new SKColor(0xFF, 0xDC, 0xA0, 0x90), IsAntialias = true, Style = SKPaintStyle.Stroke, StrokeWidth = 4, StrokeCap = SKStrokeCap.Round })
@@ -616,9 +627,10 @@ namespace demo
             if (open > 0.18f)
             {
                 canvas.Save();
-                using (var clip = new SKPath())
+                using (var clipBuilder = new SKPathBuilder())
                 {
-                    clip.AddOval(new SKRect(cx - hw, cy - hh, cx + hw, cy + hh));
+                    clipBuilder.AddOval(new SKRect(cx - hw, cy - hh, cx + hw, cy + hh), SKPathDirection.Clockwise);
+                    using var clip = clipBuilder.Detach();
                     canvas.ClipPath(clip, SKClipOperation.Intersect, true);
                 }
                 using (var teeth = new SKPaint { Color = new SKColor(0xF1, 0xEF, 0xE8), IsAntialias = true })
