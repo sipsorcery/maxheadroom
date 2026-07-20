@@ -36,6 +36,7 @@
         .code-help { margin: 0; color: #91a9b2; font-size: 0.78em; line-height: 1.35; }
         .code-auth { display: flex; gap: 6px; }
         .code-auth input { box-sizing: border-box; flex: 1; min-width: 0; padding: 6px; }
+        .code-auth button.connected { color: #0a2a18; background: #65d78a; border-color: #65d78a; }
         .code-status { min-height: 1.2em; color: #91a9b2; font-size: 0.8em; overflow-wrap: anywhere; }
         .code-status.connected { color: #65d78a; }
         .code-status.error { color: #ff8585; }
@@ -79,7 +80,7 @@
             </p>
             <div class="code-auth">
                 <input type="password" id="codeAgentToken" placeholder="Chat access token" autocomplete="current-password" />
-                <button type="button" onclick="connectCodeAgent();">Connect</button>
+                <button type="button" id="codeAgentConnectButton" onclick="connectCodeAgent();">Connect</button>
             </div>
             <div class="code-status" id="codeAgentStatus">Enter the chat access token.</div>
             <div class="code-feed" id="codeFeed" aria-live="polite">
@@ -258,15 +259,23 @@
                 return;
             }
 
+            const button = document.querySelector('#codeAgentConnectButton');
+            button.disabled = true;
+            button.textContent = 'Connecting…';
             setCodeAgentStatus('Connecting…');
             try {
                 const status = await codeAgentFetch('/code-agent/status');
                 sessionStorage.setItem('max-code-agent-token', token);
+                button.textContent = 'Connected ✓';
+                button.classList.add('connected');
                 setCodeAgentStatus(
                     `Connected · ${status.repository} · ${status.activeTasks} active / ${status.queuedTasks} queued`,
                     'connected');
                 if (currentCodeAgentTaskId) scheduleCodeAgentPoll(0);
             } catch (err) {
+                button.disabled = false;
+                button.textContent = 'Connect';
+                button.classList.remove('connected');
                 setCodeAgentStatus(err.message, 'error');
             }
         }
