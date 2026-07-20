@@ -41,8 +41,9 @@
 //   CODE_AGENT_ENDPOINT / CODE_AGENT_API_TOKEN / CODE_AGENT_REPOSITORY - internal
 //                          coding-agent controller connection.
 //   CODE_AGENT_UI_TOKEN - separate browser-to-Max token required by /code-agent/*.
-//   DOCONFIGSYNC_DISPATCH_TOKEN / DOCONFIGSYNC_REPOSITORY - GitHub credential and
-//                          repository used by the guarded voice production promotion.
+//   MAX_RELEASE_DISPATCH_TOKEN / MAX_RELEASE_REPOSITORY - GitHub credential and
+//                          repository used to start a guarded Max release.
+//                          DOCONFIGSYNC_DISPATCH_TOKEN is a transition fallback.
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
@@ -282,9 +283,10 @@ class Program
             Environment.GetEnvironmentVariable("CODE_AGENT_API_TOKEN"),
             Environment.GetEnvironmentVariable("CODE_AGENT_REPOSITORY") ?? "sipsorcery/maxheadroom");
         using var productionPromotionClient = new ProductionPromotionClient(
-            Environment.GetEnvironmentVariable("DOCONFIGSYNC_DISPATCH_TOKEN"),
-            Environment.GetEnvironmentVariable("DOCONFIGSYNC_REPOSITORY")
-                ?? "sipsorcery/doconfigsync");
+            Environment.GetEnvironmentVariable("MAX_RELEASE_DISPATCH_TOKEN")
+                ?? Environment.GetEnvironmentVariable("DOCONFIGSYNC_DISPATCH_TOKEN"),
+            Environment.GetEnvironmentVariable("MAX_RELEASE_REPOSITORY")
+                ?? "sipsorcery/maxheadroom");
         _productionPromotionCoordinator = new ProductionPromotionVoiceCoordinator(
             productionPromotionClient,
             _logger);
