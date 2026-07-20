@@ -6,6 +6,7 @@
         body { box-sizing: border-box; min-height: calc(100vh - 2em); display: flex; flex-direction: column; font-family: sans-serif; background: #0a0a2a; color: #20c0e0; max-width: 700px; margin: 1em auto; }
         video { width: 640px; height: 480px; background: #000; display: block; }
         input[type=text] { width: 480px; padding: 6px; }
+        select { padding: 6px; }
         button { padding: 6px 12px; }
         .row { margin: 8px 0; }
         label { display: inline-block; width: 70px; }
@@ -109,6 +110,15 @@
     </div>
 
     <div class="row">
+        <label for="avatarRenderer">Avatar:</label>
+        <select id="avatarRenderer">
+            <option value="cartoon">Cartoon</option>
+            <option value="wav2lip">Wav2Lip</option>
+        </select>
+        <span>applies when connecting</span>
+    </div>
+
+    <div class="row">
         <label>Mic:</label>
         <button id="micBtn" onclick="toggleMic();" disabled>Mute mic</button>
         <span id="micStatus">not connected &ndash; talk to Max once connected, or use Say/Ask below</span>
@@ -174,7 +184,11 @@
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
 
-            const response = await fetch(document.querySelector('#serverurl').value + "/offer", {
+            const renderer = document.querySelector('#avatarRenderer').value;
+            const baseUrl = document.querySelector('#serverurl').value.replace(/\/$/, '');
+            const offerUrl = new URL(baseUrl + "/offer");
+            offerUrl.searchParams.set('renderer', renderer);
+            const response = await fetch(offerUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/sdp" },
                 body: pc.localDescription.sdp
@@ -491,12 +505,16 @@
                 if (version.llmModel && version.llmModel !== 'not configured') parts.push(version.llmModel);
                 if (version.description) parts.push(version.description);
                 document.querySelector('#versionBadge').textContent = parts.join(' — ');
+                if (version.models?.avatarRenderer) {
+                    document.querySelector('#avatarRenderer').value = version.models.avatarRenderer;
+                }
             } catch (err) {
                 console.warn('Version lookup failed:', err);
             }
         }
 
         document.querySelector('#serverurl').value = BASE_URL;
+        loadVersion();
         if (DEVELOPER_MODE) {
             document.querySelector('#activityPanel').hidden = false;
             document.querySelector('#codePanel').hidden = false;
@@ -512,7 +530,6 @@
                 }
             });
             connectActivityStream(BASE_URL);
-            loadVersion();
             if (document.querySelector('#codeAgentToken').value) connectCodeAgent();
         }
     </script>
