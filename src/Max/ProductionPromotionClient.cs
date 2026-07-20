@@ -34,7 +34,7 @@ internal sealed class ProductionPromotionClient : IProductionPromotionDispatcher
     {
         _token = token?.Trim() ?? string.Empty;
         _repository = string.IsNullOrWhiteSpace(repository)
-            ? "sipsorcery/doconfigsync"
+            ? "sipsorcery/maxheadroom"
             : repository.Trim();
         _httpClient = new HttpClient
         {
@@ -67,7 +67,7 @@ internal sealed class ProductionPromotionClient : IProductionPromotionDispatcher
         request.Content = new StringContent(
             JsonSerializer.Serialize(new
             {
-                event_type = "max-production-promotion-requested",
+                event_type = "max-production-release-requested",
                 client_payload = new
                 {
                     approval_mode = approval == ProductionPromotionApproval.AutoMerge

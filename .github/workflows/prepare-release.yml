@@ -1,0 +1,314 @@
+# Starts the release path selected by Max's guarded voice confirmation. It reads
+# the immutable artifact currently deployed in staging, verifies its provenance,
+# and opens release/<version> from that exact source commit into master.
+name: prepare-release
+run-name: Prepare current Max staging release (${{ github.event.client_payload.approval_mode || inputs.approval_mode || 'review' }})
+
+on:
+  repository_dispatch:
+    types:
+      - max-production-release-requested
+  workflow_dispatch:
+    inputs:
+      approval_mode:
+        description: Leave the Max release PR open or merge it automatically
+        required: true
+        type: choice
+        options:
+          - review
+          - auto
+        default: review
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prepare-max-release
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate request
+        id: request
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_APPROVAL_MODE: ${{ github.event.client_payload.approval_mode }}
+          MANUAL_APPROVAL_MODE: ${{ inputs.approval_mode }}
+          RELEASE_AUTOMATION_TOKEN: ${{ secrets.MAX_RELEASE_AUTOMATION_TOKEN || secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          DOCONFIGSYNC_TOKEN: ${{ secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "repository_dispatch" ]]; then
+            approval_mode="$DISPATCH_APPROVAL_MODE"
+          else
+            approval_mode="$MANUAL_APPROVAL_MODE"
+          fi
+          if [[ "$approval_mode" != "review" && "$approval_mode" != "auto" ]]; then
+            echo "::error::Approval mode must be 'review' or 'auto'; got '$approval_mode'."
+            exit 1
+          fi
+          if [[ -z "$RELEASE_AUTOMATION_TOKEN" ]]; then
+            echo "::error::MAX_RELEASE_AUTOMATION_TOKEN or DOCONFIGSYNC_DISPATCH_TOKEN must be configured."
+            exit 1
+          fi
+          if [[ -z "$DOCONFIGSYNC_TOKEN" ]]; then
+            echo "::error::DOCONFIGSYNC_DISPATCH_TOKEN must be configured."
+            exit 1
+          fi
+
+          echo "approval_mode=$approval_mode" >> "$GITHUB_OUTPUT"
+
+      - name: Read current staging image
+        id: staging
+        shell: bash
+        env:
+          DOCONFIGSYNC_TOKEN: ${{ secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          staging_manifest="$(
+            GH_TOKEN="$DOCONFIGSYNC_TOKEN" gh api \
+              --method GET \
+              repos/sipsorcery/doconfigsync/contents/configs/max-headroom-staging/deployment.yaml \
+              -f ref=master \
+              --jq .content |
+              base64 --decode
+          )"
+          pinned_image="$(
+            sed -n 's/^[[:space:]]*image:[[:space:]]*\(registry\.digitalocean\.com\/sipsorcery-demo\/webrtc-max-headroom:[^[:space:]]*@sha256:[0-9a-f]\{64\}\)[[:space:]]*$/\1/p' \
+              <<< "$staging_manifest"
+          )"
+          if [[ -z "$pinned_image" || "$(printf '%s\n' "$pinned_image" | wc -l)" -ne 1 ]]; then
+            echo "::error::Expected exactly one digest-pinned Max image in the staging manifest."
+            exit 1
+          fi
+
+          if [[ ! "$pinned_image" =~ ^(registry\.digitalocean\.com/sipsorcery-demo/webrtc-max-headroom:([^@]+))@(sha256:[0-9a-f]{64})$ ]]; then
+            echo "::error::Current staging image '$pinned_image' has an invalid format."
+            exit 1
+          fi
+          image="${BASH_REMATCH[1]}"
+          image_tag="${BASH_REMATCH[2]}"
+          digest="${BASH_REMATCH[3]}"
+          if [[ "$image_tag" == staging-* ]]; then
+            version="${image_tag#staging-}"
+          else
+            version="$image_tag"
+          fi
+          if [[ ! "$version" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
+            echo "::error::Could not derive a valid release version from '$image_tag'."
+            exit 1
+          fi
+
+          {
+            echo "image=$image"
+            echo "digest=$digest"
+            echo "pinned_image=$pinned_image"
+            echo "version=$version"
+            echo "release_branch=release/$version"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: registry.digitalocean.com
+          username: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_USERNAME }}
+          password: ${{ secrets.DIGITAL_OCEAN_CONTAINER_REGISTRY_PASSWORD }}
+
+      - name: Verify staged artifact
+        id: artifact
+        shell: bash
+        env:
+          IMAGE: ${{ steps.staging.outputs.image }}
+          PINNED_IMAGE: ${{ steps.staging.outputs.pinned_image }}
+          EXPECTED_DIGEST: ${{ steps.staging.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          actual_digest="$(
+            docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest}}' |
+              jq -er '.digest'
+          )"
+          if [[ "$actual_digest" != "$EXPECTED_DIGEST" ]]; then
+            echo "::error::Registry reports $actual_digest for $IMAGE, expected $EXPECTED_DIGEST."
+            exit 1
+          fi
+
+          source_sha="$(
+            docker buildx imagetools inspect "$PINNED_IMAGE" --format '{{json .Image}}' |
+              jq -er '.config.Labels["org.opencontainers.image.revision"]'
+          )"
+          if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Staged image has invalid source revision '$source_sha'."
+            exit 1
+          fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Validate release source
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin master staging "$SOURCE_SHA"
+          git cat-file -e "$SOURCE_SHA^{commit}"
+          if ! git merge-base --is-ancestor origin/master "$SOURCE_SHA"; then
+            echo "::error::Current master is not an ancestor of staged source $SOURCE_SHA."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/staging; then
+            echo "::error::Staged source $SOURCE_SHA is not in the current staging history."
+            exit 1
+          fi
+          if [[ "$(git rev-parse "origin/master^{tree}")" == "$(git rev-parse "$SOURCE_SHA^{tree}")" ]]; then
+            echo "::error::Master already has the staged source tree; there is no release PR to create."
+            exit 1
+          fi
+
+      - name: Create release pull request
+        id: pull_request
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MAX_RELEASE_AUTOMATION_TOKEN || secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          APPROVAL_MODE: ${{ steps.request.outputs.approval_mode }}
+          RELEASE_BRANCH: ${{ steps.staging.outputs.release_branch }}
+          VERSION: ${{ steps.staging.outputs.version }}
+          PINNED_IMAGE: ${{ steps.staging.outputs.pinned_image }}
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+
+          existing_branch_sha="$(
+            gh api \
+              --method GET \
+              "repos/$GITHUB_REPOSITORY/git/ref/heads/$RELEASE_BRANCH" \
+              --jq .object.sha 2>/dev/null ||
+              true
+          )"
+          if [[ -n "$existing_branch_sha" && "$existing_branch_sha" != "$SOURCE_SHA" ]]; then
+            echo "::error::Branch $RELEASE_BRANCH already points to $existing_branch_sha, not $SOURCE_SHA."
+            exit 1
+          fi
+          if [[ -z "$existing_branch_sha" ]]; then
+            gh api \
+              --method POST \
+              "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="refs/heads/$RELEASE_BRANCH" \
+              -f sha="$SOURCE_SHA" >/dev/null
+          fi
+
+          pr_url="$(
+            gh pr list \
+              --repo "$GITHUB_REPOSITORY" \
+              --base master \
+              --head "$RELEASE_BRANCH" \
+              --state open \
+              --json url \
+              --jq '.[0].url // ""'
+          )"
+          status="already open"
+          if [[ -z "$pr_url" ]]; then
+            body="$(
+              cat <<EOF
+          ## Max release $VERSION
+
+          This release PR was requested through Max's guarded staging-to-production voice flow.
+
+          - Exact image verified in staging: \`$PINNED_IMAGE\`
+          - Tested source revision: \`$SOURCE_SHA\`
+          - Production approval mode: \`$APPROVAL_MODE\`
+
+          After this PR merges, the release finalizer verifies that the merged tree and staged artifact still match, creates \`v$VERSION\`, and asks doconfigsync to promote the same image digest.
+          EOF
+            )"
+            pr_url="$(
+              gh pr create \
+                --repo "$GITHUB_REPOSITORY" \
+                --base master \
+                --head "$RELEASE_BRANCH" \
+                --title "Release Max $VERSION" \
+                --body "$body"
+            )"
+            status="created"
+          fi
+
+          gh label create production-auto-merge \
+            --repo "$GITHUB_REPOSITORY" \
+            --color D93F0B \
+            --description "Automatically merge the Max release and production deployment PRs" \
+            --force
+          if [[ "$APPROVAL_MODE" == "auto" ]]; then
+            gh pr edit "$pr_url" --add-label production-auto-merge
+          elif gh pr view "$pr_url" --json labels --jq \
+            '[.labels[].name] | index("production-auto-merge") != null' |
+            grep -qx true; then
+            gh pr edit "$pr_url" --remove-label production-auto-merge
+          fi
+
+          {
+            echo "url=$pr_url"
+            echo "status=$status"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Merge release pull request
+        id: merge
+        if: steps.request.outputs.approval_mode == 'auto'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.MAX_RELEASE_AUTOMATION_TOKEN || secrets.DOCONFIGSYNC_DISPATCH_TOKEN }}
+          PR_URL: ${{ steps.pull_request.outputs.url }}
+        run: |
+          set -euo pipefail
+
+          gh pr merge "$PR_URL" --merge
+          pr_state="$(gh pr view "$PR_URL" --json state --jq .state)"
+          if [[ "$pr_state" == "MERGED" ]]; then
+            echo "status=merged automatically" >> "$GITHUB_OUTPUT"
+          else
+            auto_merge_enabled="$(
+              gh pr view "$PR_URL" --json autoMergeRequest --jq '.autoMergeRequest != null'
+            )"
+            if [[ "$auto_merge_enabled" != "true" ]]; then
+              echo "::error::Release PR is $pr_state and auto-merge was not enabled."
+              exit 1
+            fi
+            echo "status=waiting for required checks, then merging automatically" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Summary
+        env:
+          APPROVAL_MODE: ${{ steps.request.outputs.approval_mode }}
+          PINNED_IMAGE: ${{ steps.staging.outputs.pinned_image }}
+          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+          PR_URL: ${{ steps.pull_request.outputs.url }}
+          PR_STATUS: ${{ steps.pull_request.outputs.status }}
+          MERGE_STATUS: ${{ steps.merge.outputs.status }}
+        run: |
+          {
+            echo "## Max release prepared"
+            echo
+            echo "- Verified staging image: \`$PINNED_IMAGE\`"
+            echo "- Tested source: \`$SOURCE_SHA\`"
+            echo "- Release PR: $PR_URL"
+            echo "- PR: $PR_STATUS"
+            echo "- Approval mode: \`$APPROVAL_MODE\`"
+            if [[ "$APPROVAL_MODE" == "auto" ]]; then
+              echo "- Merge: $MERGE_STATUS"
+            else
+              echo "- Merge: awaiting review"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
