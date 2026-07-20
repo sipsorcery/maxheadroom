@@ -207,7 +207,7 @@ dotnet run -- --snapshot      # writes maxheadroom_visemeN.png files
 ### Coding-agent chat POC
 
 In developer mode (`/dev`), the right-side **Code agent** panel starts coding tasks on the Max repository and
-shows progress, the final response, and the draft pull-request URL. Subsequent
+shows progress, the final response, and the pull-request URL. Subsequent
 messages continue the current Codex task; **New task** starts a separate one.
 
 The browser never talks directly to the controller and never receives its bearer
@@ -226,9 +226,28 @@ browser tab's `sessionStorage`.
 
 The first message calls `POST /repositories`, which clones the repository through
 the controller's persisted SSH identity if necessary. It then starts a task with
-delivery instructions to branch from the current upstream default branch, implement
-and validate the request, push with the dedicated GitHub identity, and open a draft
-pull request targeting `master`.
+delivery instructions to branch from `origin/staging`, implement and validate the
+request, push with the dedicated GitHub identity, and open a ready-for-review pull
+request targeting `staging`.
+
+### Voice production promotion
+
+Max recognizes a guarded staging-to-production command in normal voice
+conversation. For example:
+
+1. Say `The staging deployment is good; use it for production.`
+2. Say either `Review it`, `Auto merge production`, or `Cancel`.
+
+The first utterance never changes a deployment. The second utterance dispatches
+the `max-production-promotion-requested` event to `doconfigsync`. Review mode
+leaves its generated production deployment PR open; auto mode merges it after
+the workflow verifies that the digest-pinned image is the exact image recorded
+in the staging manifest. Flux observes production only after the PR is merged.
+
+| Variable | Purpose |
+|---|---|
+| `DOCONFIGSYNC_DISPATCH_TOKEN` | GitHub token allowed to dispatch repository events to `sipsorcery/doconfigsync`. If absent, Max explains that promotion is not configured. |
+| `DOCONFIGSYNC_REPOSITORY` | Dispatch target; defaults to `sipsorcery/doconfigsync`. |
 
 ## Docker
 

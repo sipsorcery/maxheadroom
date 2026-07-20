@@ -81,6 +81,7 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
 
     public event Action<string>? InputTranscript;
     public event Action<string>? OutputTranscript;
+    public Func<string, Task<bool>>? InputTranscriptHandler { get; set; }
 
     public bool IsConnected => _socket.State == WebSocketState.Open && _ready.Task.IsCompletedSuccessfully;
 
@@ -120,7 +121,10 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                             threshold = 0.5,
                             prefix_padding_ms = 300,
                             silence_duration_ms = _silenceDurationMs,
-                            create_response = true,
+                            // Route the final transcript through Max first so privileged
+                            // voice commands can be handled deterministically. Unhandled
+                            // transcripts explicitly request the normal model response.
+                            create_response = false,
                             interrupt_response = true,
                         },
                     },
@@ -251,7 +255,9 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 var transcript = GetString(root, "transcript");
                 if (!string.IsNullOrWhiteSpace(transcript))
                 {
-                    InputTranscript?.Invoke(transcript.Trim());
+                    var cleanTranscript = transcript.Trim();
+                    InputTranscript?.Invoke(cleanTranscript);
+                    _ = RouteInputTranscriptAsync(cleanTranscript);
                 }
                 break;
             }
@@ -341,6 +347,41 @@ public sealed class OpenAiRealtimeSession : IAsyncDisposable
                 _ready.TrySetException(new InvalidOperationException(error));
                 _pendingAsk?.TrySetException(new InvalidOperationException(error));
                 break;
+        }
+    }
+
+    private async Task RouteInputTranscriptAsync(string transcript)
+    {
+        try
+        {
+            var handled = InputTranscriptHandler != null &&
+                await InputTranscriptHandler(transcript).ConfigureAwait(false);
+            if (!handled)
+            {
+                await SendAsync(new { type = "response.create" }, _stop.Token)
+                    .ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+        {
+        }
+        catch (Exception excp)
+        {
+            logger.LogError(excp, "Failed to route Realtime input transcript.");
+            if (_socket.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await SendAsync(new { type = "response.create" }, _stop.Token)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception fallbackExcp)
+                {
+                    logger.LogError(
+                        fallbackExcp,
+                        "Failed to request fallback Realtime response.");
+                }
+            }
         }
     }
 
