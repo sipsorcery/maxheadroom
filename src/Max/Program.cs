@@ -15,8 +15,9 @@
 // and the Say/Ask text boxes are parallel inputs.
 //
 // Endpoints:
-//   POST /offer  - WebRTC SDP offer/answer exchange (called by the browser). The
-//                  audio track is send/recv: the avatar voice out, the mic in.
+//   POST /offer  - WebRTC SDP offer/answer exchange (called by the browser). An optional
+//                  renderer query parameter selects cartoon or wav2lip for the call.
+//                  The audio track is send/recv: the avatar voice out, the mic in.
 //   POST /say    - body = text. Speaks the text verbatim.
 //   POST /ask    - body = prompt. Runs the prompt through the LLM (if configured)
 //                  and speaks the reply (same path as speaking to it).
@@ -784,10 +785,18 @@ class Program
 
     private static async Task<IResult> HandleOffer(HttpRequest request)
     {
+        var rendererKind = request.Query["renderer"].ToString();
+        if (!string.IsNullOrWhiteSpace(rendererKind) &&
+            !string.Equals(rendererKind, "cartoon", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(rendererKind, "wav2lip", StringComparison.OrdinalIgnoreCase))
+        {
+            return Results.BadRequest("Renderer must be 'cartoon' or 'wav2lip'.");
+        }
+
         var sdpOffer = await ReadBody(request);
         _logger.LogDebug("Received SDP offer:\n{offer}", sdpOffer);
 
-        var pc = CreatePeerConnection();
+        var pc = CreatePeerConnection(rendererKind);
 
         var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdpOffer, type = RTCSdpType.offer });
         if (result != SetDescriptionResultEnum.OK)
@@ -803,7 +812,7 @@ class Program
         return Results.Text(pc.localDescription.sdp.ToString());
     }
 
-    private static RTCPeerConnection CreatePeerConnection()
+    private static RTCPeerConnection CreatePeerConnection(string rendererKind = null)
     {
         var config = new RTCConfiguration
         {
@@ -818,7 +827,7 @@ class Program
 
         var pc = new RTCPeerConnection(config);
 
-        IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder());
+        IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder(), rendererKind);
         var videoTrack = new MediaStreamTrack(videoSource.GetVideoSourceFormats(), MediaStreamStatusEnum.SendOnly);
         pc.addTrack(videoTrack);
         videoSource.OnVideoSourceEncodedSample += pc.SendVideo;
@@ -1004,9 +1013,11 @@ class Program
     /// when its model files are present, else the SkiaSharp cartoon. Nothing else in the
     /// pipeline changes - the speaker and peer-connection wiring only see IAvatarRenderer.
     /// </summary>
-    private static IAvatarRenderer CreateRenderer(IVideoEncoder encoder)
+    private static IAvatarRenderer CreateRenderer(IVideoEncoder encoder, string kind = null)
     {
-        var kind = Environment.GetEnvironmentVariable("AVATAR_RENDERER");
+        kind = string.IsNullOrWhiteSpace(kind)
+            ? Environment.GetEnvironmentVariable("AVATAR_RENDERER")
+            : kind;
 
         // Default: the in-process Wav2Lip renderer whenever its model + persona files are
         // present (the cartoon needs nothing, so it is the fallback). AVATAR_RENDERER
