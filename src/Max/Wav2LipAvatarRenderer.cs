@@ -762,14 +762,15 @@ public sealed class Wav2LipAvatarRenderer : IAvatarRenderer
             var (a1, a2, dir, hue0) = regions[f];
             float hue = (float)(hue0 + 8 * Math.Sin(t * 0.07 + f * 2.1)) * 2f;   // Skia hue is 0..360.
 
-            using var wedge = new SKPath();
-            wedge.MoveTo(vx, vy);
+            using var wedgeBuilder = new SKPathBuilder();
+            wedgeBuilder.MoveTo(vx, vy);
             for (int i = 0; i <= 13; i++)
             {
                 double deg = (a1 + (a2 - a1) * i / 13.0) * Math.PI / 180.0;
-                wedge.LineTo(vx + R * (float)Math.Cos(deg), vy + R * (float)Math.Sin(deg));
+                wedgeBuilder.LineTo(vx + R * (float)Math.Cos(deg), vy + R * (float)Math.Sin(deg));
             }
-            wedge.Close();
+            wedgeBuilder.Close();
+            using var wedge = wedgeBuilder.Detach();
 
             canvas.Save();
             canvas.ClipPath(wedge, antialias: true);
