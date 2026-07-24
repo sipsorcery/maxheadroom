@@ -1,5 +1,5 @@
 ﻿//-----------------------------------------------------------------------------
-// Filename: MaxHeadroomVideoSource.cs
+// Filename: MaxHeadroomVideoSourceBoxy.cs
 //
 // Description: A SIPSorcery IVideoSource that renders a stylised "Max Headroom"
 // style talking head with SkiaSharp. The mouth shape is driven by the
@@ -7,13 +7,10 @@
 // AzureTtsSpeaker updates in sync with the synthesised audio. A few retro
 // glitch / scanline effects are layered on top to get the 80s CGI look.
 //
-// The source owns an IVideoEncoder (passed to the constructor). Each rendered
-// frame is encoded in the render loop and emitted on OnVideoSourceEncodedSample,
-// which Program.cs wires straight to RTCPeerConnection.SendVideo - the same
-// pattern the in-box VideoTestPatternSource uses. The unencoded BGR frame is
-// still published on OnVideoSourceRawSample for any raw subscribers (e.g. a
-// local preview). When no encoder is supplied the source renders raw frames
-// only, which is all the --snapshot preview path needs.
+// The rendered frame is emitted as a raw BGR sample on OnVideoSourceRawSample.
+// Program.cs pipes that into a VideoEncoderEndPoint (libvpx VP8) which encodes
+// and forwards to RTCPeerConnection.SendVideo, mirroring the
+// WebRTCGetStartedLibvpx example.
 //
 // Author(s):
 // Aaron Clauson (aaron@sipsorcery.com)
