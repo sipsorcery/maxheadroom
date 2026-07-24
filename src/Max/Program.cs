@@ -787,10 +787,11 @@ class Program
     {
         var rendererKind = request.Query["renderer"].ToString();
         if (!string.IsNullOrWhiteSpace(rendererKind) &&
+            !string.Equals(rendererKind, "boxy", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(rendererKind, "cartoon", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(rendererKind, "wav2lip", StringComparison.OrdinalIgnoreCase))
         {
-            return Results.BadRequest("Renderer must be 'cartoon' or 'wav2lip'.");
+            return Results.BadRequest("Renderer must be 'boxy', 'cartoon' or 'wav2lip'.");
         }
 
         var sdpOffer = await ReadBody(request);
@@ -1032,6 +1033,11 @@ class Program
         {
             _logger.LogInformation("Using the IN-PROCESS Wav2Lip avatar renderer.");
             return new Wav2LipAvatarRenderer(encoder);
+        }
+        else if(string.Equals(kind, "boxy", StringComparison.OrdinalIgnoreCase))
+        {
+            _logger.LogInformation("Using the Max Headroom Boxy avatar renderer.");
+            return new MaxHeadroomVideoSourceBoxy(encoder);
         }
         return new MaxHeadroomVideoSource(encoder);
     }
