@@ -26,13 +26,17 @@
 //   GET  /version - build identity and active LLM/TTS/STT/renderer configuration.
 //
 // Configuration (environment variables, all optional):
-//   SHERPA_MODEL_DIR / SHERPA_STT_DIR / SHERPA_STT_PROVIDER - sherpa TTS/STT model
-//                          folder overrides and STT execution provider.
+//   SHERPA_MODEL_DIR / SHERPA_MODEL_DIR_FEMALE / SHERPA_STT_DIR / SHERPA_STT_PROVIDER -
+//                          sherpa TTS voice folders (the FEMALE one is used for female
+//                          models; the default/male one otherwise), STT model folder and
+//                          STT execution provider.
 //   LLM_GGUF / LLM_GPU_LAYERS - in-process LLM model path + GPU offload layers.
 //   LLM_ENDPOINT / LLM_MODEL / LLM_API_KEY - OpenAI-compatible endpoint alternative
 //                          (Ollama / LM Studio / hosted gateway).
-//   AVATAR_RENDERER      - wav2lip | cartoon. Defaults to wav2lip when its model
-//                          files exist.
+//   AVATAR_RENDERER      - wav2lip | cartoon | boxy | fast-glb. Defaults to wav2lip when
+//                          its model files exist. fast-glb renders a VRM/GLB via the CPU
+//                          rasterizer (AVATAR_GLB_PATH or the ?model= picker).
+//   AVATAR_GLB_PATH      - VRM/GLB model for the fast-glb renderer (else a bundled sample).
 //   WAV2LIP_ONNX / NEURAL_PERSONA / NEURAL_MATTE / NEURAL_FACE_BOX / NEURAL_EYES -
 //                          avatar model, persona image, matte and persona geometry.
 //   VISEME_LEAD_MS       - ms to lead the mouth ahead of the audio (default 0).
@@ -61,6 +65,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -103,9 +108,12 @@ class Program
     // that interleaved on the shared audio track (issue #27).
     private static int _turnVersion;
 
-    private static string _sherpaModelDir;
+    private static string _sherpaModelDir;        // default / male voice
+    private static string _sherpaModelDirFemale;  // female voice (used for female models)
     private static string _elevenLabsKey;
     private static string _elevenLabsVoiceId;
+    private static string _elevenLabsMaleVoiceId;
+    private static string _elevenLabsFemaleVoiceId;
     private static string _elevenLabsModel;
     private static string _elevenLabsSttModel;
     private static string _elevenLabsSttRealtimeModel;
@@ -161,13 +169,79 @@ class Program
             return;
         }
 
+        // Fast CPU rasterizer smoke test: drive FastGlbAvatarRenderer with synthetic speech
+        // (or a triggered action) and save the live BGR frames to PNG. No WebRTC, no GPU.
+        //   --fast-glb-test <model> <outDir> [action]
+        var commandLine = Environment.GetCommandLineArgs();
+        int fastGlbTestIdx = Array.IndexOf(commandLine, "--fast-glb-test");
+        if (fastGlbTestIdx >= 0 && fastGlbTestIdx + 2 < commandLine.Length)
+        {
+            string modelPath = commandLine[fastGlbTestIdx + 1];
+            string outputDirectory = commandLine[fastGlbTestIdx + 2];
+            string action = fastGlbTestIdx + 3 < commandLine.Length && !commandLine[fastGlbTestIdx + 3].StartsWith("--")
+                ? commandLine[fastGlbTestIdx + 3] : null;
+            Directory.CreateDirectory(outputDirectory);
+            bool rotate180 = modelPath.Replace('\\', '/').Contains("rotate180", StringComparison.OrdinalIgnoreCase);
+            string vrmaDir = new[]
+            {
+                Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "vrma"),
+                Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "vrma"),
+            }.FirstOrDefault(Directory.Exists);
+
+            using var renderer = new FastGlbAvatarRenderer(modelPath, encoder: null, rotate180: rotate180, vrmaDir: vrmaDir);
+            byte[] latest = null;
+            object gate = new();
+            renderer.OnVideoSourceRawSample += (dur, w, h, sample, fmt) => { lock (gate) { latest = sample; } };
+            renderer.StartVideo().Wait();
+
+            if (action != null)
+            {
+                bool ok = renderer.TriggerAction(action);
+                _logger.LogInformation("Triggered action '{Action}' ({Ok}); available: [{All}].", action, ok, string.Join(",", renderer.ActionNames));
+                for (int i = 0; i < 20; i++)
+                {
+                    System.Threading.Thread.Sleep(350);
+                    SaveBgrPng(latest, FastGlbAvatarRenderer.WIDTH, FastGlbAvatarRenderer.HEIGHT, Path.Combine(outputDirectory, $"frame-{i:000}.png"));
+                }
+                _logger.LogInformation("Rendered fast CPU GLB action test for {Model} to {Directory}.", modelPath, outputDirectory);
+                return;
+            }
+
+            const int sr = 24000;
+            float[] speech = AvatarRenderer.Core.Audio.TestSignal.SynthesizeSpeech(sr);
+            var pcm = new short[speech.Length];
+            for (int i = 0; i < speech.Length; i++) { pcm[i] = (short)Math.Clamp(speech[i] * 32767f, short.MinValue, short.MaxValue); }
+
+            renderer.SetVisemeTimeline(VisemeTimelineBuilder.Build(
+                "hello world this is the fast avatar renderer speaking", speech.Length / (double)sr));
+            renderer.BeginSpeech();
+            int chunk = sr / 50; // 20ms
+            int saved = 0, tick = 0;
+            for (int off = 0; off < pcm.Length; off += chunk)
+            {
+                int n = Math.Min(chunk, pcm.Length - off);
+                renderer.PushAudio(new ReadOnlySpan<short>(pcm, off, n), sr);
+                System.Threading.Thread.Sleep(20);
+                if (tick++ % 12 == 0) { SaveBgrPng(latest, FastGlbAvatarRenderer.WIDTH, FastGlbAvatarRenderer.HEIGHT, Path.Combine(outputDirectory, $"frame-{saved++:000}.png")); }
+            }
+            renderer.EndSpeech();
+            for (int i = 0; i < 6; i++) { System.Threading.Thread.Sleep(120); SaveBgrPng(latest, FastGlbAvatarRenderer.WIDTH, FastGlbAvatarRenderer.HEIGHT, Path.Combine(outputDirectory, $"frame-{saved++:000}.png")); }
+
+            _logger.LogInformation("Rendered fast CPU GLB smoke test for {Model} ({Frames} frames) to {Directory}.", modelPath, saved, outputDirectory);
+            return;
+        }
+
         // In-process is the default: each engine has a conventional model path and is used
         // automatically when its files are present (env vars override; see the README's
         // "Everything in-process" section).
         _sherpaModelDir = Environment.GetEnvironmentVariable("SHERPA_MODEL_DIR")
             ?? @"C:\tools\sherpa-tts\vits-piper-en_US-ryan-high";
+        _sherpaModelDirFemale = Environment.GetEnvironmentVariable("SHERPA_MODEL_DIR_FEMALE")
+            ?? @"C:\tools\sherpa-tts\vits-piper-en_US-hfc_female-medium";
         _elevenLabsKey = Environment.GetEnvironmentVariable("ELEVENLABS_API_KEY");
         _elevenLabsVoiceId = Environment.GetEnvironmentVariable("ELEVENLABS_VOICE_ID") ?? "21m00Tcm4TlvDq8ikWAM"; // "Rachel".
+        _elevenLabsMaleVoiceId = Environment.GetEnvironmentVariable("ELEVENLABS_MALE_VOICE_ID") ?? _elevenLabsVoiceId;
+        _elevenLabsFemaleVoiceId = Environment.GetEnvironmentVariable("ELEVENLABS_FEMALE_VOICE_ID") ?? _elevenLabsVoiceId;
         _elevenLabsModel = Environment.GetEnvironmentVariable("ELEVENLABS_MODEL") ?? "eleven_turbo_v2_5";
         _elevenLabsSttModel = Environment.GetEnvironmentVariable("ELEVENLABS_STT_MODEL") ?? "scribe_v1";
         _elevenLabsSttRealtimeModel = Environment.GetEnvironmentVariable("ELEVENLABS_STT_REALTIME_MODEL") ?? "scribe_v2_realtime";
@@ -265,6 +339,10 @@ class Program
         {
             _ = SherpaTtsSpeaker.PreloadAsync(_sherpaModelDir);
         }
+        if (SherpaFemaleConfigured())
+        {
+            _ = SherpaTtsSpeaker.PreloadAsync(_sherpaModelDirFemale);
+        }
         if (SherpaSpeechRecognizer.FilesPresent())
         {
             _ = SherpaSpeechRecognizer.PreloadAsync();
@@ -310,6 +388,30 @@ class Program
         }));
         app.MapGet("/events", StreamUiEvents);
         app.MapPost("/offer", HandleOffer);
+
+        // Avatar models available to the fast-glb renderer (name/file/gender/rotate180).
+        app.MapGet("/avatar/models", () => Results.Json(FindAvatarModels()));
+
+        // Available VRMA action words (from the bundled clips), for the UI hint list.
+        app.MapGet("/avatar/actions", () => Results.Json(new { actions = FindActionNames() }));
+
+        // Trigger an avatar action without speaking, e.g. GET /avatar/action?name=jump.
+        app.MapGet("/avatar/action", (string name) =>
+        {
+            if (_videoSource is not FastGlbAvatarRenderer fast)
+            {
+                return Results.BadRequest(new { error = "The active avatar renderer is not fast-glb (connect with renderer=fast-glb first)." });
+            }
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return Results.BadRequest(new { error = "name is required", available = fast.ActionNames });
+            }
+            bool ok = fast.TriggerAction(name);
+            PublishUiEvent("action", name);
+            return ok
+                ? Results.Ok(new { triggered = name, available = fast.ActionNames })
+                : Results.NotFound(new { error = $"No action matches '{name}'.", available = fast.ActionNames });
+        });
 
         app.MapGet("/code-agent/status", async (HttpRequest request, CancellationToken cancellationToken) =>
         {
@@ -683,6 +785,13 @@ class Program
         PublishUiEvent("stt", text);
         try
         {
+            // A single spoken action word ("jump", "clap", …) triggers the avatar action
+            // instead of going to the LLM.
+            if (TryTriggerAvatarAction(text))
+            {
+                return;
+            }
+
             if (await TryHandleProductionPromotionAsync(text, null).ConfigureAwait(false))
             {
                 return;
@@ -698,6 +807,42 @@ class Program
         {
             _logger.LogError(excp, "Error handling recognized speech.");
         }
+    }
+
+    // Triggers a FastGlb avatar action when the transcript is a single word matching a
+    // bundled .vrma clip (e.g. "jump", "clap", "relax", "look"). Returns true if handled.
+    private static bool TryTriggerAvatarAction(string text)
+    {
+        if (_videoSource is not FastGlbAvatarRenderer fast) return false;
+        string word = (text ?? string.Empty).Trim().Trim('.', '!', '?', ',');
+        if (word.Length == 0 || word.Contains(' ')) return false; // single word only
+        if (fast.TriggerAction(word))
+        {
+            _logger.LogInformation("Avatar action triggered from STT word '{Word}'.", word);
+            PublishUiEvent("action", word);
+            return true;
+        }
+        return false;
+    }
+
+    // Encodes a 24-bit BGR frame (as produced by FastGlbAvatarRenderer) to a PNG via SkiaSharp.
+    private static void SaveBgrPng(byte[] bgr, int width, int height, string path)
+    {
+        if (bgr == null) { return; }
+        using var bitmap = new SkiaSharp.SKBitmap(width, height, SkiaSharp.SKColorType.Bgra8888, SkiaSharp.SKAlphaType.Opaque);
+        var bgra = new byte[width * height * 4];
+        for (int i = 0, j = 0; i < width * height; i++)
+        {
+            bgra[j++] = bgr[i * 3 + 0];
+            bgra[j++] = bgr[i * 3 + 1];
+            bgra[j++] = bgr[i * 3 + 2];
+            bgra[j++] = 255;
+        }
+        System.Runtime.InteropServices.Marshal.Copy(bgra, 0, bitmap.GetPixels(), bgra.Length);
+        using var image = SkiaSharp.SKImage.FromBitmap(bitmap);
+        using var data = image.Encode(SkiaSharp.SKEncodedImageFormat.Png, 100);
+        using var fs = File.Create(path);
+        data.SaveTo(fs);
     }
 
     private static async Task<bool> TryHandleProductionPromotionAsync(
@@ -786,18 +931,21 @@ class Program
     private static async Task<IResult> HandleOffer(HttpRequest request)
     {
         var rendererKind = request.Query["renderer"].ToString();
+        var modelName = request.Query["model"].ToString();
         if (!string.IsNullOrWhiteSpace(rendererKind) &&
             !string.Equals(rendererKind, "boxy", StringComparison.OrdinalIgnoreCase) &&
             !string.Equals(rendererKind, "cartoon", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(rendererKind, "wav2lip", StringComparison.OrdinalIgnoreCase))
+            !string.Equals(rendererKind, "wav2lip", StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(rendererKind, "fast-glb", StringComparison.OrdinalIgnoreCase))
         {
-            return Results.BadRequest("Renderer must be 'boxy', 'cartoon' or 'wav2lip'.");
+            return Results.BadRequest("Renderer must be 'boxy', 'cartoon', 'wav2lip' or 'fast-glb'.");
         }
 
         var sdpOffer = await ReadBody(request);
         _logger.LogDebug("Received SDP offer:\n{offer}", sdpOffer);
 
-        var pc = CreatePeerConnection(rendererKind);
+        string modelGender = FindAvatarModels().FirstOrDefault(x => string.Equals(x.file, modelName, StringComparison.OrdinalIgnoreCase))?.gender;
+        var pc = CreatePeerConnection(rendererKind, modelName, modelGender);
 
         var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdpOffer, type = RTCSdpType.offer });
         if (result != SetDescriptionResultEnum.OK)
@@ -813,7 +961,7 @@ class Program
         return Results.Text(pc.localDescription.sdp.ToString());
     }
 
-    private static RTCPeerConnection CreatePeerConnection(string rendererKind = null)
+    private static RTCPeerConnection CreatePeerConnection(string rendererKind = null, string modelName = null, string modelGender = null)
     {
         var config = new RTCConfiguration
         {
@@ -828,7 +976,7 @@ class Program
 
         var pc = new RTCPeerConnection(config);
 
-        IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder(), rendererKind);
+        IAvatarRenderer videoSource = CreateRenderer(new FFmpegVideoEncoder(), rendererKind, modelName);
         var videoTrack = new MediaStreamTrack(videoSource.GetVideoSourceFormats(), MediaStreamStatusEnum.SendOnly);
         pc.addTrack(videoTrack);
         videoSource.OnVideoSourceEncodedSample += pc.SendVideo;
@@ -852,7 +1000,7 @@ class Program
         audioSource.OnAudioSourceEncodedSample += pc.SendAudio;
         pc.OnAudioFormatsNegotiated += formats => audioSource.SetAudioSourceFormat(formats.First());
 
-        IAvatarSpeaker speaker = OpenAiRealtimeConfigured() ? null : CreateSpeaker(videoSource, audioSource);
+        IAvatarSpeaker speaker = OpenAiRealtimeConfigured() ? null : CreateSpeaker(videoSource, audioSource, modelGender);
         ISpeechRecognizer recognizer = null;
         OpenAiRealtimeSession realtimeSession = null;
         if (OpenAiRealtimeConfigured())
@@ -1014,7 +1162,7 @@ class Program
     /// when its model files are present, else the SkiaSharp cartoon. Nothing else in the
     /// pipeline changes - the speaker and peer-connection wiring only see IAvatarRenderer.
     /// </summary>
-    private static IAvatarRenderer CreateRenderer(IVideoEncoder encoder, string kind = null)
+    private static IAvatarRenderer CreateRenderer(IVideoEncoder encoder, string kind = null, string modelName = null)
     {
         kind = string.IsNullOrWhiteSpace(kind)
             ? Environment.GetEnvironmentVariable("AVATAR_RENDERER")
@@ -1022,7 +1170,7 @@ class Program
 
         // Default: the in-process Wav2Lip renderer whenever its model + persona files are
         // present (the cartoon needs nothing, so it is the fallback). AVATAR_RENDERER
-        // overrides: wav2lip | cartoon.
+        // overrides: wav2lip | cartoon | boxy | fast-glb.
         if (string.IsNullOrWhiteSpace(kind))
         {
             kind = Wav2LipAvatarRenderer.FilesPresent() ? "wav2lip" : "cartoon";
@@ -1033,6 +1181,34 @@ class Program
         {
             _logger.LogInformation("Using the IN-PROCESS Wav2Lip avatar renderer.");
             return new Wav2LipAvatarRenderer(encoder);
+        }
+        else if (string.Equals(kind, "fast-glb", StringComparison.OrdinalIgnoreCase))
+        {
+            string modelPath = ResolveAvatarModel(modelName) ?? Environment.GetEnvironmentVariable("AVATAR_GLB_PATH");
+            if (string.IsNullOrWhiteSpace(modelPath))
+            {
+                string[] candidates =
+                {
+                    Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "male", "Seed-san.vrm"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "male", "Seed-san.vrm"),
+                    Path.Combine(AppContext.BaseDirectory, "AvatarModels", "male", "Seed-san.vrm"),
+                };
+                modelPath = candidates.FirstOrDefault(File.Exists);
+                if (modelPath == null)
+                {
+                    throw new InvalidOperationException("AVATAR_GLB_PATH must point to a .gltf, .glb or .vrm model when AVATAR_RENDERER=fast-glb.");
+                }
+                _logger.LogInformation("AVATAR_GLB_PATH not set; using bundled VRM sample {Model}.", modelPath);
+            }
+            bool rotate180 = modelPath.Replace('\\', '/').Contains("rotate180", StringComparison.OrdinalIgnoreCase);
+            string vrmaDir = new[]
+            {
+                Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "vrma"),
+                Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "vrma"),
+                Path.Combine(AppContext.BaseDirectory, "AvatarModels", "vrma"),
+            }.FirstOrDefault(Directory.Exists);
+            _logger.LogInformation("Using the fast CPU-rasterizer glTF avatar renderer with {Model} (rotate180={Rotate}, vrma={Vrma}).", modelPath, rotate180, vrmaDir);
+            return new FastGlbAvatarRenderer(modelPath, encoder, rotate180, vrmaDir);
         }
         else if(string.Equals(kind, "boxy", StringComparison.OrdinalIgnoreCase))
         {
@@ -1047,17 +1223,21 @@ class Program
     /// is set, otherwise the local in-process sherpa-onnx engine.
     /// Returns null if no TTS is configured.
     /// </summary>
-    private static IAvatarSpeaker CreateSpeaker(IAvatarRenderer renderer, AudioExtrasSource audio)
+    private static IAvatarSpeaker CreateSpeaker(IAvatarRenderer renderer, AudioExtrasSource audio, string gender = null)
     {
         if (!string.IsNullOrWhiteSpace(_elevenLabsKey))
         {
+            string voiceId = string.Equals(gender, "male", StringComparison.OrdinalIgnoreCase)
+                ? _elevenLabsMaleVoiceId : _elevenLabsFemaleVoiceId;
             return _elevenLabsStreaming
-                ? new ElevenLabsStreamingTtsSpeaker(_elevenLabsKey, _elevenLabsVoiceId, _elevenLabsModel, renderer, audio, _visemeLeadMs)
-                : new ElevenLabsTtsSpeaker(_elevenLabsKey, _elevenLabsVoiceId, _elevenLabsModel, renderer, audio, _visemeLeadMs);
+                ? new ElevenLabsStreamingTtsSpeaker(_elevenLabsKey, voiceId, _elevenLabsModel, renderer, audio, _visemeLeadMs)
+                : new ElevenLabsTtsSpeaker(_elevenLabsKey, voiceId, _elevenLabsModel, renderer, audio, _visemeLeadMs);
         }
         if (SherpaConfigured())
         {
-            return new SherpaTtsSpeaker(_sherpaModelDir, renderer, audio, _visemeLeadMs);
+            string voiceDir = SherpaModelDirFor(gender);
+            _logger.LogInformation("Using sherpa TTS voice {Voice} for gender '{Gender}'.", System.IO.Path.GetFileName(voiceDir), gender ?? "unspecified");
+            return new SherpaTtsSpeaker(voiceDir, renderer, audio, _visemeLeadMs);
         }
         return null;
     }
@@ -1258,6 +1438,71 @@ class Program
     /// <summary>True if the in-process sherpa-onnx TTS is configured (a voice model directory).</summary>
     private static bool SherpaConfigured() =>
         !string.IsNullOrWhiteSpace(_sherpaModelDir) && Directory.Exists(_sherpaModelDir);
+
+    /// <summary>True if a separate female sherpa voice directory is available.</summary>
+    private static bool SherpaFemaleConfigured() =>
+        !string.IsNullOrWhiteSpace(_sherpaModelDirFemale) && Directory.Exists(_sherpaModelDirFemale);
+
+    /// <summary>Picks the sherpa voice folder for a model's gender (female voice for female models).</summary>
+    private static string SherpaModelDirFor(string gender) =>
+        string.Equals(gender, "female", StringComparison.OrdinalIgnoreCase) && SherpaFemaleConfigured()
+            ? _sherpaModelDirFemale
+            : _sherpaModelDir;
+
+    // Lists the bundled VRMA action clip names (independent of any active renderer).
+    private static string[] FindActionNames()
+    {
+        string dir = new[]
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "vrma"),
+            Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "vrma"),
+            Path.Combine(AppContext.BaseDirectory, "AvatarModels", "vrma"),
+        }.FirstOrDefault(Directory.Exists);
+        return dir == null
+            ? Array.Empty<string>()
+            : Directory.EnumerateFiles(dir, "*.vrma")
+                .Select(Path.GetFileNameWithoutExtension)
+                .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+    }
+
+    // Resolves a requested avatar model file name to a bundled model path (or null).
+    private static string ResolveAvatarModel(string modelName)
+    {
+        if (string.IsNullOrWhiteSpace(modelName)) { return null; }
+        string requested = modelName.Trim().Replace('\\', '/');
+        if (requested.StartsWith('/') || requested.Contains("..", StringComparison.Ordinal) ||
+            (!requested.EndsWith(".vrm", StringComparison.OrdinalIgnoreCase) &&
+             !requested.EndsWith(".glb", StringComparison.OrdinalIgnoreCase))) { return null; }
+        return FindAvatarModels().FirstOrDefault(x =>
+            string.Equals(x.file, requested, StringComparison.OrdinalIgnoreCase))?.Path;
+    }
+
+    private sealed record AvatarModel(string name, string file, string gender, bool rotate180,
+        [property: JsonIgnore] string Path);
+
+    // Discovers bundled VRM/GLB avatar models, deriving gender from a male/female folder
+    // and rotate180 from a rotate180/ folder (VRM 0.x models are authored back-facing).
+    private static AvatarModel[] FindAvatarModels()
+    {
+        string[] roots = { Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels"),
+            Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels") };
+        return roots.Where(Directory.Exists)
+            .SelectMany(root => Directory.EnumerateFiles(root, "*.*", SearchOption.AllDirectories)
+                .Where(path => path.EndsWith(".vrm", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".glb", StringComparison.OrdinalIgnoreCase))
+                .Select(path =>
+                {
+                    string relative = System.IO.Path.GetRelativePath(root, path).Replace('\\', '/');
+                    string[] parts = relative.Split('/');
+                    string gender = parts.FirstOrDefault(p => p.Equals("male", StringComparison.OrdinalIgnoreCase) || p.Equals("female", StringComparison.OrdinalIgnoreCase)) ?? "unspecified";
+                    bool rotate = parts.Any(p => p.Equals("rotate180", StringComparison.OrdinalIgnoreCase));
+                    return new AvatarModel(System.IO.Path.GetFileNameWithoutExtension(path), relative, gender, rotate, path);
+                }))
+            .GroupBy(model => model.file, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(model => model.name, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
 
     private static object DescribeModelConfig()
     {
