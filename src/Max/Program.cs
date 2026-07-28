@@ -44,6 +44,8 @@
 //   VISEME_LEAD_MS       - ms to lead the mouth ahead of the audio (default 0).
 //   ELEVENLABS_API_KEY (+ ELEVENLABS_VOICE_ID/MODEL/STT_MODEL/STREAMING/...) - cloud
 //                          speech engines; when set they take priority for TTS + STT.
+//   OPENAI_REALTIME_MALE_VOICE / OPENAI_REALTIME_FEMALE_VOICE - realtime voices selected
+//                          from the active avatar's gender (defaults cedar / marin).
 //   STT_TRAILING_SILENCE_MS - 200..2000ms; legacy buffered STT defaults to 600ms.
 //   CODE_AGENT_ENDPOINT / CODE_AGENT_API_TOKEN / CODE_AGENT_REPOSITORY - internal
 //                          coding-agent controller connection.
@@ -124,6 +126,8 @@ class Program
     private static bool _openAiRealtimeEnabled;
     private static string _openAiRealtimeModel;
     private static string _openAiRealtimeVoice;
+    private static string _openAiRealtimeMaleVoice;
+    private static string _openAiRealtimeFemaleVoice;
     private static string _openAiRealtimeTranscriptionModel;
     private static int _openAiRealtimeSilenceMs;
     private static int _visemeLeadMs = 0;
@@ -248,7 +252,10 @@ class Program
         _openAiRealtimeEnabled = string.Equals(
             Environment.GetEnvironmentVariable("OPENAI_REALTIME_ENABLED"), "true", StringComparison.OrdinalIgnoreCase);
         _openAiRealtimeModel = Environment.GetEnvironmentVariable("OPENAI_REALTIME_MODEL") ?? "gpt-realtime-2.1-mini";
-        _openAiRealtimeVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_VOICE") ?? "cedar";
+        string configuredRealtimeVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_VOICE");
+        _openAiRealtimeVoice = configuredRealtimeVoice ?? "cedar";
+        _openAiRealtimeMaleVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_MALE_VOICE") ?? configuredRealtimeVoice ?? "cedar";
+        _openAiRealtimeFemaleVoice = Environment.GetEnvironmentVariable("OPENAI_REALTIME_FEMALE_VOICE") ?? configuredRealtimeVoice ?? "marin";
         _openAiRealtimeTranscriptionModel =
             Environment.GetEnvironmentVariable("OPENAI_REALTIME_TRANSCRIPTION_MODEL") ?? "gpt-4o-mini-transcribe";
         _openAiRealtimeSilenceMs = int.TryParse(
@@ -1009,7 +1016,7 @@ class Program
             realtimeSession = new OpenAiRealtimeSession(
                 _openAiApiKey,
                 _openAiRealtimeModel,
-                _openAiRealtimeVoice,
+                OpenAiRealtimeVoiceFor(modelGender),
                 _openAiRealtimeTranscriptionModel,
                 _openAiRealtimeSilenceMs,
                 videoSource,
@@ -1440,6 +1447,12 @@ class Program
         string.Equals(gender, "female", StringComparison.OrdinalIgnoreCase) && SherpaFemaleConfigured()
             ? _sherpaModelDirFemale
             : _sherpaModelDir;
+
+    /// <summary>Picks the OpenAI Realtime voice for a model's gender.</summary>
+    private static string OpenAiRealtimeVoiceFor(string gender) =>
+        string.Equals(gender, "female", StringComparison.OrdinalIgnoreCase)
+            ? _openAiRealtimeFemaleVoice
+            : _openAiRealtimeMaleVoice;
 
     // Candidate AvatarModels root directories. AVATAR_MODELS_DIR (a single absolute path)
     // is honoured first so a k8s volume mount / arbitrary deploy location just works;
