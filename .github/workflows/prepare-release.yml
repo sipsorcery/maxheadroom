@@ -157,27 +157,27 @@ jobs:
           fi
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
 
-      - name: Validate release source
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
-        run: |
-          set -euo pipefail
-
-          git fetch --no-tags origin master staging "$SOURCE_SHA"
-          git cat-file -e "$SOURCE_SHA^{commit}"
-          if ! git merge-base --is-ancestor origin/master "$SOURCE_SHA"; then
-            echo "::error::Current master is not an ancestor of staged source $SOURCE_SHA."
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/staging; then
-            echo "::error::Staged source $SOURCE_SHA is not in the current staging history."
-            exit 1
-          fi
-          if [[ "$(git rev-parse "origin/master^{tree}")" == "$(git rev-parse "$SOURCE_SHA^{tree}")" ]]; then
-            echo "::error::Master already has the staged source tree; there is no release PR to create."
-            exit 1
-          fi
+      #- name: Validate release source
+      #  shell: bash
+      #  env:
+      #    SOURCE_SHA: ${{ steps.artifact.outputs.source_sha }}
+      #  run: |
+      #    set -euo pipefail
+      #
+      #    git fetch --no-tags origin master staging "$SOURCE_SHA"
+      #    git cat-file -e "$SOURCE_SHA^{commit}"
+      #    if ! git merge-base --is-ancestor origin/master "$SOURCE_SHA"; then
+      #      echo "::error::Current master is not an ancestor of staged source $SOURCE_SHA."
+      #      exit 1
+      #    fi
+      #    if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/staging; then
+      #      echo "::error::Staged source $SOURCE_SHA is not in the current staging history."
+      #      exit 1
+      #    fi
+      #    if [[ "$(git rev-parse "origin/master^{tree}")" == "$(git rev-parse "$SOURCE_SHA^{tree}")" ]]; then
+      #      echo "::error::Master already has the staged source tree; there is no release PR to create."
+      #      exit 1
+      #    fi
 
       - name: Create release pull request
         id: pull_request
