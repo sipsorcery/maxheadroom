@@ -17,6 +17,8 @@ services:
       ASPNETCORE_URLS: http://0.0.0.0:8080
       WAIT_FOR_ICE_GATHERING_TO_SEND_ANSWER: true
       AVATAR_RENDERER: "${AVATAR_RENDERER:-}"
+      # Root for the fast-glb renderer's VRM/GLB models + .vrma clips (mount it as a volume).
+      AVATAR_MODELS_DIR: /models/AvatarModels
       SHERPA_MODEL_DIR: /models/sherpa-tts/vits-piper-en_US-ryan-high
       SHERPA_MODEL_DIR_FEMALE: /models/sherpa-tts/vits-piper-en_US-hfc_female-medium
       SHERPA_STT_DIR: /models/sherpa-stt/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8

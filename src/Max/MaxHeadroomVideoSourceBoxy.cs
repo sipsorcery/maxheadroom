@@ -394,9 +394,10 @@ namespace demo
             if (open > 0.18f)
             {
                 canvas.Save();
-                using (var clip = new SKPath())
+                using (var builder = new SKPathBuilder())
                 {
-                    clip.AddOval(new SKRect(cx - hw, cy - hh, cx + hw, cy + hh));
+                    builder.AddOval(new SKRect(cx - hw, cy - hh, cx + hw, cy + hh));
+                    using var clip = builder.Snapshot();
                     canvas.ClipPath(clip, SKClipOperation.Intersect, true);
                 }
                 using (var teeth = new SKPaint { Color = new SKColor(0xF1, 0xEF, 0xE8), IsAntialias = true })
@@ -448,7 +449,7 @@ namespace demo
                         _rng.Next(2) == 0 ? new SKColor(0xFF, 0x00, 0x60, 0x60) : new SKColor(0x00, 0xE0, 0xFF, 0x60),
                         SKBlendMode.Screen)
                 };
-                canvas.DrawImage(snapshot, src, dst, tint);
+                canvas.DrawImage(snapshot, src, dst, new SKSamplingOptions(SKFilterMode.Linear), tint);
             }
         }
 
