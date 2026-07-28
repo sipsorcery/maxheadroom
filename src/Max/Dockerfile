@@ -59,6 +59,11 @@ RUN apt-get update \
 COPY --from=ffmpeg /opt/ffmpeg /opt/ffmpeg
 COPY --from=build --chown=app:app /app/publish /app
 
+# Bake the fast-glb avatar models + .vrma action clips into the image so the renderer
+# works out of the box. AVATAR_MODELS_DIR can still override this at runtime (e.g. to a
+# mounted volume) since it is tried before this /app/AvatarModels fallback.
+COPY --from=build --chown=app:app /src/src/Max/AvatarModels /app/AvatarModels
+
 ENV ASPNETCORE_URLS=http://0.0.0.0:8080 \
     DOTNET_EnableDiagnostics=0 \
     GIT_BRANCH=${GIT_BRANCH} \

@@ -37,6 +37,8 @@
 //                          its model files exist. fast-glb renders a VRM/GLB via the CPU
 //                          rasterizer (AVATAR_GLB_PATH or the ?model= picker).
 //   AVATAR_GLB_PATH      - VRM/GLB model for the fast-glb renderer (else a bundled sample).
+//   AVATAR_MODELS_DIR    - AvatarModels root (models + vrma clips); set to the mounted
+//                          volume in k8s. Falls back to ./AvatarModels or src/Max/... locally.
 //   WAV2LIP_ONNX / NEURAL_PERSONA / NEURAL_MATTE / NEURAL_FACE_BOX / NEURAL_EYES -
 //                          avatar model, persona image, matte and persona geometry.
 //   VISEME_LEAD_MS       - ms to lead the mouth ahead of the audio (default 0).
@@ -182,11 +184,7 @@ class Program
                 ? commandLine[fastGlbTestIdx + 3] : null;
             Directory.CreateDirectory(outputDirectory);
             bool rotate180 = modelPath.Replace('\\', '/').Contains("rotate180", StringComparison.OrdinalIgnoreCase);
-            string vrmaDir = new[]
-            {
-                Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "vrma"),
-                Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "vrma"),
-            }.FirstOrDefault(Directory.Exists);
+            string vrmaDir = AvatarVrmaDir();
 
             using var renderer = new FastGlbAvatarRenderer(modelPath, encoder: null, rotate180: rotate180, vrmaDir: vrmaDir);
             byte[] latest = null;
@@ -1190,26 +1188,17 @@ class Program
             string modelPath = ResolveAvatarModel(modelName) ?? Environment.GetEnvironmentVariable("AVATAR_GLB_PATH");
             if (string.IsNullOrWhiteSpace(modelPath))
             {
-                string[] candidates =
-                {
-                    Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "male", "Seed-san.vrm"),
-                    Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "male", "Seed-san.vrm"),
-                    Path.Combine(AppContext.BaseDirectory, "AvatarModels", "male", "Seed-san.vrm"),
-                };
-                modelPath = candidates.FirstOrDefault(File.Exists);
+                modelPath = AvatarModelsRoots()
+                    .Select(r => Path.Combine(r, "male", "Seed-san.vrm"))
+                    .FirstOrDefault(File.Exists);
                 if (modelPath == null)
                 {
-                    throw new InvalidOperationException("AVATAR_GLB_PATH must point to a .gltf, .glb or .vrm model when AVATAR_RENDERER=fast-glb.");
+                    throw new InvalidOperationException("AVATAR_GLB_PATH must point to a .gltf, .glb or .vrm model when AVATAR_RENDERER=fast-glb (or set AVATAR_MODELS_DIR).");
                 }
                 _logger.LogInformation("AVATAR_GLB_PATH not set; using bundled VRM sample {Model}.", modelPath);
             }
             bool rotate180 = modelPath.Replace('\\', '/').Contains("rotate180", StringComparison.OrdinalIgnoreCase);
-            string vrmaDir = new[]
-            {
-                Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "vrma"),
-                Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "vrma"),
-                Path.Combine(AppContext.BaseDirectory, "AvatarModels", "vrma"),
-            }.FirstOrDefault(Directory.Exists);
+            string vrmaDir = AvatarVrmaDir();
             _logger.LogInformation("Using the fast CPU-rasterizer glTF avatar renderer with {Model} (rotate180={Rotate}, vrma={Vrma}).", modelPath, rotate180, vrmaDir);
             return new FastGlbAvatarRenderer(modelPath, encoder, rotate180, vrmaDir);
         }
@@ -1452,15 +1441,26 @@ class Program
             ? _sherpaModelDirFemale
             : _sherpaModelDir;
 
+    // Candidate AvatarModels root directories. AVATAR_MODELS_DIR (a single absolute path)
+    // is honoured first so a k8s volume mount / arbitrary deploy location just works;
+    // otherwise the conventional local locations are tried.
+    private static IEnumerable<string> AvatarModelsRoots()
+    {
+        var configured = Environment.GetEnvironmentVariable("AVATAR_MODELS_DIR");
+        if (!string.IsNullOrWhiteSpace(configured)) { yield return configured; }
+        yield return Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels");
+        yield return Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels");
+        yield return Path.Combine(AppContext.BaseDirectory, "AvatarModels");
+    }
+
+    /// <summary>The <c>vrma</c> sub-directory of the first existing AvatarModels root, or null.</summary>
+    private static string AvatarVrmaDir() =>
+        AvatarModelsRoots().Select(r => Path.Combine(r, "vrma")).FirstOrDefault(Directory.Exists);
+
     // Lists the bundled VRMA action clip names (independent of any active renderer).
     private static string[] FindActionNames()
     {
-        string dir = new[]
-        {
-            Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels", "vrma"),
-            Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels", "vrma"),
-            Path.Combine(AppContext.BaseDirectory, "AvatarModels", "vrma"),
-        }.FirstOrDefault(Directory.Exists);
+        string dir = AvatarVrmaDir();
         return dir == null
             ? Array.Empty<string>()
             : Directory.EnumerateFiles(dir, "*.vrma")
@@ -1488,9 +1488,7 @@ class Program
     // and rotate180 from a rotate180/ folder (VRM 0.x models are authored back-facing).
     private static AvatarModel[] FindAvatarModels()
     {
-        string[] roots = { Path.Combine(Directory.GetCurrentDirectory(), "AvatarModels"),
-            Path.Combine(Directory.GetCurrentDirectory(), "src", "Max", "AvatarModels") };
-        return roots.Where(Directory.Exists)
+        return AvatarModelsRoots().Where(Directory.Exists)
             .SelectMany(root => Directory.EnumerateFiles(root, "*.*", SearchOption.AllDirectories)
                 .Where(path => path.EndsWith(".vrm", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".glb", StringComparison.OrdinalIgnoreCase))
                 .Select(path =>
