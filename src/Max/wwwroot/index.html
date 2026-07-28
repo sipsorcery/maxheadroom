@@ -112,10 +112,26 @@
     <div class="row">
         <label for="avatarRenderer">Avatar:</label>
         <select id="avatarRenderer">
+            <option value="boxy">Boxy Cartoon</option>
             <option value="cartoon">Cartoon</option>
             <option value="wav2lip">Wav2Lip</option>
+            <option value="fast-glb">Fast CPU GLB</option>
         </select>
         <span>applies when connecting</span>
+    </div>
+
+    <div class="row">
+        <label for="avatarModel">Model:</label>
+        <select id="avatarModel">
+            <option value="">Loading models...</option>
+        </select>
+        <span>used by fast-glb</span>
+    </div>
+
+    <div class="row" id="actionsRow" style="display:none;">
+        <label>Actions:</label>
+        <span id="actionsList">loading&hellip;</span>
+        <span>say the word, or click (fast-glb)</span>
     </div>
 
     <div class="row">
@@ -151,6 +167,55 @@
         const BASE_URL = window.location.origin;
         const DEVELOPER_MODE = window.location.pathname === '/dev';
         document.body.classList.toggle('developer-mode', DEVELOPER_MODE);
+
+        function updateModelSelector() {
+            const renderer = document.querySelector('#avatarRenderer').value;
+            const model = document.querySelector('#avatarModel');
+            model.disabled = renderer !== 'fast-glb';
+            const isFast = renderer === 'fast-glb';
+            document.querySelector('#actionsRow').style.display = isFast ? '' : 'none';
+            if (isFast) { loadActions(); }
+        }
+
+        async function loadActions() {
+            const list = document.querySelector('#actionsList');
+            try {
+                const res = await fetch(BASE_URL + '/avatar/actions');
+                const names = (await res.json()).actions || [];
+                list.innerHTML = '';
+                if (names.length === 0) { list.textContent = 'none bundled'; return; }
+                names.forEach(n => {
+                    const b = document.createElement('button');
+                    b.textContent = n;
+                    b.style.marginRight = '4px';
+                    b.onclick = () => fetch(BASE_URL + '/avatar/action?name=' + encodeURIComponent(n));
+                    list.appendChild(b);
+                });
+            } catch (e) { list.textContent = 'unavailable'; }
+        }
+
+        async function loadAvatarModels() {
+            try {
+                const response = await fetch('/avatar/models');
+                if (!response.ok) throw new Error('model list request failed');
+                const models = await response.json();
+                const select = document.querySelector('#avatarModel');
+                select.replaceChildren(...models.map(model => {
+                    const option = document.createElement('option');
+                    option.value = model.file;
+                    option.textContent = model.name + ' (' + model.gender + (model.rotate180 ? ', rotate 180°' : '') + ')';
+                    return option;
+                }));
+                if (models.length === 0) select.add(new Option('No VRM/GLB models found', ''));
+            } catch (err) {
+                console.warn('Unable to load avatar models:', err);
+            }
+        }
+
+        document.querySelector('#avatarRenderer').addEventListener('change', updateModelSelector);
+        updateModelSelector();
+        loadAvatarModels();
+
         var pc;
         var micStream;
         var activityStream;
@@ -185,9 +250,11 @@
             await pc.setLocalDescription(offer);
 
             const renderer = document.querySelector('#avatarRenderer').value;
+            const model = document.querySelector('#avatarModel').value;
             const baseUrl = document.querySelector('#serverurl').value.replace(/\/$/, '');
             const offerUrl = new URL(baseUrl + "/offer");
             offerUrl.searchParams.set('renderer', renderer);
+            offerUrl.searchParams.set('model', model);
             const response = await fetch(offerUrl, {
                 method: "POST",
                 headers: { "Content-Type": "application/sdp" },

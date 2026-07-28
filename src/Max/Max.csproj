@@ -19,6 +19,11 @@
     <PackageReference Include="SIPSorceryMedia.FFmpeg" Version="10.0.12" />
     <PackageReference Include="SkiaSharp" Version="4.150.1" />
     <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.150.1" />
+    <!-- FastGlbAvatarRenderer: fast pure-managed CPU rasterizer for glTF/GLB/VRM avatars.
+         SharpGLTF loads the model; ImageSharp (pinned to the free 3.1.x - v4 needs a paid
+         licence) decodes embedded textures. Both are pure-managed and cross-platform. -->
+    <PackageReference Include="SharpGLTF.Toolkit" Version="1.0.6" />
+    <PackageReference Include="SixLabors.ImageSharp" Version="3.1.11" />
     <!-- IN-PROCESS Wav2Lip avatar (Wav2LipAvatarRenderer): onnxruntime runs the lip-sync
          model (DirectML uses any DX12 GPU on Windows, CPU elsewhere) and MathNet provides
          the FFT for the librosa-compatible mel front-end - replaces the Python sidecar. -->
