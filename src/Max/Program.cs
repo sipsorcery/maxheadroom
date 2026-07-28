@@ -944,7 +944,10 @@ class Program
         var sdpOffer = await ReadBody(request);
         _logger.LogDebug("Received SDP offer:\n{offer}", sdpOffer);
 
-        string modelGender = FindAvatarModels().FirstOrDefault(x => string.Equals(x.file, modelName, StringComparison.OrdinalIgnoreCase))?.gender;
+        string modelGender =
+            !string.Equals(rendererKind, "fast-glb", StringComparison.OrdinalIgnoreCase) ? "male" :
+            FindAvatarModels().FirstOrDefault(x => string.Equals(x.file, modelName, StringComparison.OrdinalIgnoreCase))?.gender;
+
         var pc = CreatePeerConnection(rendererKind, modelName, modelGender);
 
         var result = pc.setRemoteDescription(new RTCSessionDescriptionInit { sdp = sdpOffer, type = RTCSdpType.offer });
