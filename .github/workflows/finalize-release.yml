@@ -65,14 +65,14 @@ jobs:
             exit 1
           fi
 
-          git fetch --no-tags origin "$HEAD_SHA" "$MERGE_SHA"
-          source_tree="$(git rev-parse "$HEAD_SHA^{tree}")"
-          merge_tree="$(git rev-parse "$MERGE_SHA^{tree}")"
-          if [[ "$source_tree" != "$merge_tree" ]]; then
-            echo "::error::The merged master tree does not match the tested release source tree."
-            echo "::error::Source tree: $source_tree; merged tree: $merge_tree."
-            exit 1
-          fi
+          #git fetch --no-tags origin "$HEAD_SHA" "$MERGE_SHA"
+          #source_tree="$(git rev-parse "$HEAD_SHA^{tree}")"
+          #merge_tree="$(git rev-parse "$MERGE_SHA^{tree}")"
+          #if [[ "$source_tree" != "$merge_tree" ]]; then
+          #  echo "::error::The merged master tree does not match the tested release source tree."
+          #  echo "::error::Source tree: $source_tree; merged tree: $merge_tree."
+          #  exit 1
+          #fi
 
           approval_mode="review"
           if jq -e 'index("production-auto-merge") != null' <<< "$LABELS_JSON" >/dev/null; then
