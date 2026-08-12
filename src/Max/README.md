@@ -54,9 +54,8 @@ deployment is `dotnet publish` plus model files on disk — no Python, no venvs,
 | `ILlmClient.cs` | The reply-generation contract (one-shot + sentence stream) both LLM clients implement, plus the shared Max persona prompt. |
 | `LlamaSharpLlmClient.cs` | **In-process** LLM via LLamaSharp (llama.cpp) — runs the same GGUF models as Ollama with no external server. Set `LLM_GGUF`. |
 | `LocalLlmClient.cs` | OpenAI-compatible HTTP chat client (Ollama / LM Studio / hosted gateway) for generating in-character replies. |
-| `CodeAgentClient.cs` | Server-side client for the cluster-internal Codex controller. It registers the Max repository, starts tasks, polls status, and sends follow-up feedback without exposing the controller bearer token to the browser. |
-| `Program.cs` | ASP.NET host: `/offer` (send/recv WebRTC), `/say`, `/ask`, and the authenticated `/code-agent/*` proxy. Routes both the Ask box and recognised speech through one shared `AskAsync`. |
-| `wwwroot/index.html` | Browser client: connect (captures the mic), a mic mute toggle, and Say / Ask controls. Open `/dev` to show image diagnostics, speech activity, and the coding-agent chat. |
+| `Program.cs` | ASP.NET host: `/offer` (send/recv WebRTC), `/say`, `/ask`. Routes both the Ask box and recognised speech through one shared `AskAsync`. |
+| `wwwroot/index.html` | Browser client: connect (captures the mic), a mic mute toggle, and Say / Ask controls. Open `/dev` to show image diagnostics and speech activity. |
 
 ## Everything in-process (the default)
 
@@ -203,32 +202,6 @@ Render a still frame without a call (sanity check):
 ```powershell
 dotnet run -- --snapshot      # writes maxheadroom_visemeN.png files
 ```
-
-### Coding-agent chat POC
-
-In developer mode (`/dev`), the right-side **Code agent** panel starts coding tasks on the Max repository and
-shows progress, the final response, and the pull-request URL. Subsequent
-messages continue the current Codex task; **New task** starts a separate one.
-
-The browser never talks directly to the controller and never receives its bearer
-token. Max proxies the requests with these settings:
-
-| Variable | Purpose |
-|---|---|
-| `CODE_AGENT_ENDPOINT` | Internal controller URL, for example `http://codex-codeagent.codex-codeagent.svc.cluster.local:8080`. |
-| `CODE_AGENT_API_TOKEN` | The controller's `AGENT_API_TOKEN`, held only by Max's backend. |
-| `CODE_AGENT_REPOSITORY` | GitHub repository to register and modify; defaults to `sipsorcery/maxheadroom`. |
-| `CODE_AGENT_UI_TOKEN` | A separate token entered in the browser. If it is missing, all `/code-agent/*` endpoints return 503. |
-
-The Max page is public, so `CODE_AGENT_UI_TOKEN` must be a strong random value and
-must not be the same as `CODE_AGENT_API_TOKEN`. The UI token is kept only in the
-browser tab's `sessionStorage`.
-
-The first message calls `POST /repositories`, which clones the repository through
-the controller's persisted SSH identity if necessary. It then starts a task with
-delivery instructions to branch from `origin/staging`, implement and validate the
-request, push with the dedicated GitHub identity, and open a ready-for-review pull
-request targeting `staging`.
 
 ### Voice production promotion
 
