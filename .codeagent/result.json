@@ -1,0 +1,1 @@
+{"summary":"Removed the obsolete Code Agent dispatcher integration, including its backend client and proxy endpoints, developer UI panel and task state, configuration, and documentation.","pullRequestUrl":"https://github.com/sipsorcery/maxheadroom/pull/79"}
