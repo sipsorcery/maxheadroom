@@ -21,8 +21,6 @@
 //   POST /say    - body = text. Speaks the text verbatim.
 //   POST /ask    - body = prompt. Runs the prompt through the LLM (if configured)
 //                  and speaks the reply (same path as speaking to it).
-//   /code-agent/* - authenticated server-side proxy to the cluster-internal coding
-//                  agent. The browser never receives the controller bearer token.
 //   GET  /version - build identity and active LLM/TTS/STT/renderer configuration.
 //
 // Configuration (environment variables, all optional):
@@ -47,9 +45,6 @@
 //   OPENAI_REALTIME_MALE_VOICE / OPENAI_REALTIME_FEMALE_VOICE - realtime voices selected
 //                          from the active avatar's gender (defaults cedar / marin).
 //   STT_TRAILING_SILENCE_MS - 200..2000ms; legacy buffered STT defaults to 600ms.
-//   CODE_AGENT_ENDPOINT / CODE_AGENT_API_TOKEN / CODE_AGENT_REPOSITORY - internal
-//                          coding-agent controller connection.
-//   CODE_AGENT_UI_TOKEN - separate browser-to-Max token required by /code-agent/*.
 //   MAX_RELEASE_DISPATCH_TOKEN / MAX_RELEASE_REPOSITORY - GitHub credential and
 //                          repository used to start a guarded Max release.
 //                          DOCONFIGSYNC_DISPATCH_TOKEN is a transition fallback.
@@ -66,7 +61,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -362,10 +356,6 @@ class Program
         var builder = WebApplication.CreateBuilder();
         builder.Host.UseSerilog();
         var app = builder.Build();
-        using var codeAgent = new CodeAgentClient(
-            Environment.GetEnvironmentVariable("CODE_AGENT_ENDPOINT"),
-            Environment.GetEnvironmentVariable("CODE_AGENT_API_TOKEN"),
-            Environment.GetEnvironmentVariable("CODE_AGENT_REPOSITORY") ?? "sipsorcery/maxheadroom");
         using var productionPromotionClient = new ProductionPromotionClient(
             Environment.GetEnvironmentVariable("MAX_RELEASE_DISPATCH_TOKEN")
                 ?? Environment.GetEnvironmentVariable("DOCONFIGSYNC_DISPATCH_TOKEN"),
@@ -374,7 +364,6 @@ class Program
         _productionPromotionCoordinator = new ProductionPromotionVoiceCoordinator(
             productionPromotionClient,
             _logger);
-        string codeAgentUiToken = Environment.GetEnvironmentVariable("CODE_AGENT_UI_TOKEN");
 
         app.UseDefaultFiles();
         app.UseStaticFiles();
@@ -416,104 +405,6 @@ class Program
             return ok
                 ? Results.Ok(new { triggered = name, available = fast.ActionNames })
                 : Results.NotFound(new { error = $"No action matches '{name}'.", available = fast.ActionNames });
-        });
-
-        app.MapGet("/code-agent/status", async (HttpRequest request, CancellationToken cancellationToken) =>
-        {
-            var rejected = RejectCodeAgentRequest(request, codeAgent, codeAgentUiToken);
-            if (rejected != null) { return rejected; }
-
-            try
-            {
-                var health = await codeAgent.GetHealthAsync(cancellationToken);
-                return Results.Json(new
-                {
-                    configured = true,
-                    repository = codeAgent.Repository,
-                    health.Status,
-                    health.ActiveTasks,
-                    health.QueuedTasks,
-                });
-            }
-            catch (CodeAgentRequestException excp)
-            {
-                return CodeAgentFailure(excp);
-            }
-        });
-
-        app.MapPost("/code-agent/tasks", async (HttpRequest request, CancellationToken cancellationToken) =>
-        {
-            var rejected = RejectCodeAgentRequest(request, codeAgent, codeAgentUiToken);
-            if (rejected != null) { return rejected; }
-
-            var body = await request.ReadFromJsonAsync<CodeAgentChatRequest>(
-                cancellationToken: cancellationToken);
-            if (string.IsNullOrWhiteSpace(body?.Message))
-            {
-                return Results.BadRequest(new { error = "message is required" });
-            }
-            if (body.Message.Length > 8000)
-            {
-                return Results.BadRequest(new { error = "message must be 8000 characters or fewer" });
-            }
-
-            try
-            {
-                var task = await codeAgent.CreateTaskAsync(body.Message, cancellationToken);
-                return Results.Json(task, statusCode: StatusCodes.Status202Accepted);
-            }
-            catch (CodeAgentRequestException excp)
-            {
-                return CodeAgentFailure(excp);
-            }
-        });
-
-        app.MapGet("/code-agent/tasks/{taskId}", async (
-            HttpRequest request,
-            string taskId,
-            CancellationToken cancellationToken) =>
-        {
-            var rejected = RejectCodeAgentRequest(request, codeAgent, codeAgentUiToken);
-            if (rejected != null) { return rejected; }
-
-            try
-            {
-                return Results.Json(await codeAgent.GetTaskAsync(taskId, cancellationToken));
-            }
-            catch (CodeAgentRequestException excp)
-            {
-                return CodeAgentFailure(excp);
-            }
-        });
-
-        app.MapPost("/code-agent/tasks/{taskId}/feedback", async (
-            HttpRequest request,
-            string taskId,
-            CancellationToken cancellationToken) =>
-        {
-            var rejected = RejectCodeAgentRequest(request, codeAgent, codeAgentUiToken);
-            if (rejected != null) { return rejected; }
-
-            var body = await request.ReadFromJsonAsync<CodeAgentChatRequest>(
-                cancellationToken: cancellationToken);
-            if (string.IsNullOrWhiteSpace(body?.Message))
-            {
-                return Results.BadRequest(new { error = "message is required" });
-            }
-            if (body.Message.Length > 8000)
-            {
-                return Results.BadRequest(new { error = "message must be 8000 characters or fewer" });
-            }
-
-            try
-            {
-                var task = await codeAgent.AddFeedbackAsync(taskId, body.Message, cancellationToken);
-                return Results.Json(task, statusCode: StatusCodes.Status202Accepted);
-            }
-            catch (CodeAgentRequestException excp)
-            {
-                return CodeAgentFailure(excp);
-            }
         });
 
         app.MapPost("/say", async (HttpRequest request) =>
@@ -593,49 +484,6 @@ class Program
         }
 
         await app.RunAsync();
-    }
-
-    private static IResult RejectCodeAgentRequest(
-        HttpRequest request,
-        CodeAgentClient codeAgent,
-        string uiToken)
-    {
-        if (!codeAgent.IsConfigured)
-        {
-            return Results.Problem(
-                "The code-agent backend is not configured.",
-                statusCode: StatusCodes.Status503ServiceUnavailable);
-        }
-
-        if (string.IsNullOrWhiteSpace(uiToken))
-        {
-            return Results.Problem(
-                "CODE_AGENT_UI_TOKEN is not configured; the public chat endpoint is disabled.",
-                statusCode: StatusCodes.Status503ServiceUnavailable);
-        }
-
-        string supplied = request.Headers["X-Code-Agent-Token"].ToString();
-        byte[] suppliedBytes = Encoding.UTF8.GetBytes(supplied);
-        byte[] expectedBytes = Encoding.UTF8.GetBytes(uiToken);
-        return suppliedBytes.Length == expectedBytes.Length &&
-            CryptographicOperations.FixedTimeEquals(suppliedBytes, expectedBytes)
-            ? null
-            : Results.Unauthorized();
-    }
-
-    private static IResult CodeAgentFailure(CodeAgentRequestException excp)
-    {
-        int statusCode = excp.StatusCode switch
-        {
-            System.Net.HttpStatusCode.BadRequest => StatusCodes.Status400BadRequest,
-            System.Net.HttpStatusCode.Unauthorized => StatusCodes.Status502BadGateway,
-            System.Net.HttpStatusCode.NotFound => StatusCodes.Status404NotFound,
-            _ => StatusCodes.Status502BadGateway,
-        };
-
-        _logger.LogWarning(excp, "Code-agent request failed with upstream HTTP {StatusCode}.",
-            (int)excp.StatusCode);
-        return Results.Problem(excp.Message, statusCode: statusCode);
     }
 
     /// <summary>
